@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api';
 import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 import { Modal, Empty, Spinner } from '../../components/Layout';
 import { Plus, Trash2, Users, ChevronDown, ChevronUp, CheckCircle, X, AlertTriangle } from 'lucide-react';
 
@@ -468,11 +469,55 @@ function SummaryModal({ groupId, teachers, onClose, onDone }) {
   if (loading) return <Modal open onClose={onClose} title="Enrollment Summary"><div style={{textAlign:'center',padding:40}}><Spinner/></div></Modal>;
 
   const { group, summary, notSubmitted, totalChoices } = data || {};
+
+  const downloadExcel = () => {
+    const wb = XLSX.utils.book_new();
+    // One sheet per subject with its student list
+    summary.forEach(sub => {
+      if (!sub.students.length) return;
+      const rows = [
+        [`${group.slotLabel} — ${sub.subjectName} (${sub.subjectCode})`],
+        [`Enrolled: ${sub.students.length}${sub.hasLab ? ' · includes lab: ' + sub.labCode : ''}`],
+        [],
+        ['S.No','Roll No','Name','Section','Status','Allotted To'],
+        ...sub.students.map((s,i)=>[
+          i+1, s.usn, s.name, `Sec ${s.section}`,
+          s.isDetained ? 'DETAINED' : (s.status==='confirmed'?'Confirmed':s.status==='rejected'?'Rejected':'Pending'),
+          s.allotted || '—'
+        ])
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{wch:6},{wch:16},{wch:28},{wch:8},{wch:12},{wch:14}];
+      // Sheet names max 31 chars
+      const name = sub.subjectCode.slice(0,31);
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    });
+    // Summary sheet
+    const sumRows = [
+      [`${group.slotLabel} — Enrollment Summary`],
+      [`Sem ${group.currentSemester} → Sem ${group.targetSemester} · ${group.program}`],
+      [],
+      ['Subject Code','Subject Name','1st Pref Count','Status'],
+      ...summary.map(s=>[s.subjectCode, s.subjectName, s.enrollmentCount, s.status.toUpperCase()])
+    ];
+    if (notSubmitted?.length) {
+      sumRows.push([], ['Students who did NOT submit:'], ['Roll No','Name','Section']);
+      notSubmitted.forEach(s=>sumRows.push([s.usn, s.name, `Sec ${s.section}`]));
+    }
+    const wsSum = XLSX.utils.aoa_to_sheet(sumRows);
+    wsSum['!cols'] = [{wch:16},{wch:30},{wch:14},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
+    XLSX.writeFile(wb, `${group.slotLabel.replace(/[^a-zA-Z0-9]/g,'_')}_allotments.xlsx`);
+    toast.success('Excel downloaded!');
+  };
   const allSubjectCodes = summary?.map(s=>s.subjectCode)||[];
 
   return (
     <Modal open onClose={onClose} title={`Enrollment Summary — ${group?.slotLabel}`} width={900}>
       <div style={{display:'flex',flexDirection:'column',gap:16,maxHeight:'80vh',overflowY:'auto'}}>
+        <button className="btn btn-white btn-sm" style={{alignSelf:'flex-end'}} onClick={downloadExcel}>
+          ⬇ Download Student Lists (Excel)
+        </button>
         {/* Stats */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
           {[

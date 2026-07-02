@@ -838,9 +838,48 @@ textarea.input { resize: vertical; min-height: 80px; }
 .btn-published { animation: pulse 1.2s ease 1; }
 
 /* ── RESPONSIVE ──────────────────────────────────────────────────────── */
+.mobile-menu-btn { display:none; }
+.mobile-overlay  { display:none; }
+
 @media (max-width: 900px) {
   .sidebar { width: 220px; min-width: 220px; }
   .page-content { padding: 20px; }
+}
+
+/* Phones — sidebar becomes slide-in drawer */
+@media (max-width: 768px) {
+  .mobile-menu-btn {
+    display:flex; align-items:center; justify-content:center;
+    position:fixed; top:12px; left:12px; z-index:1002;
+    width:42px; height:42px; border-radius:12px;
+    background:var(--navy); color:#fff; border:1px solid rgba(255,255,255,.12);
+    cursor:pointer; box-shadow:0 2px 12px rgba(0,0,0,.25);
+  }
+  .mobile-overlay {
+    display:block; position:fixed; inset:0; z-index:1000;
+    background:rgba(0,0,0,.45);
+  }
+  .sidebar {
+    position:fixed; top:0; left:0; bottom:0; z-index:1001;
+    width:260px; min-width:260px;
+    transform:translateX(-100%);
+    transition:transform .25s ease;
+  }
+  .sidebar--open { transform:translateX(0); }
+  .page-content { padding:16px; padding-top:64px; }
+  .topbar { padding-left:64px; }
+
+  /* Tables scroll horizontally instead of breaking */
+  .t-tbl-shell, .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .tbl { min-width:640px; }
+
+  /* Stat grids stack */
+  .a-stats, .t-stats { grid-template-columns:1fr 1fr !important; }
+  .s-hero { padding:20px 16px; }
+  .s-hero__stat { padding:0 12px; }
+
+  /* Modals fit small screens */
+  .modal { width:94vw !important; max-width:94vw !important; margin:0 3vw; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

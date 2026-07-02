@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, BarChart2 } from 'lucide-react';
+import { LogOut, BarChart2, Menu, X } from 'lucide-react';
 
 export function Layout({ nav, children, title, subtitle }) {
   const { user, logout } = useAuth();
@@ -9,10 +9,16 @@ export function Layout({ nav, children, title, subtitle }) {
   const location = useLocation();
   const doLogout = () => { logout(); navigate('/'); };
   const initials = (user?.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <div className="page-layout">
-      <aside className="sidebar">
+      {/* Mobile hamburger */}
+      <button className="mobile-menu-btn" onClick={() => setMobileOpen(o => !o)} aria-label="Menu">
+        {mobileOpen ? <X size={20}/> : <Menu size={20}/>}
+      </button>
+      {mobileOpen && <div className="mobile-overlay" onClick={() => setMobileOpen(false)}/>}
+      <aside className={`sidebar${mobileOpen ? ' sidebar--open' : ''}`}>
         {/* Logo */}
         <div className="sidebar-logo">
           <div className="sidebar-logo-icon">
@@ -35,7 +41,7 @@ export function Layout({ nav, children, title, subtitle }) {
             return (
               <button key={i}
                 className={`nav-item${isActive && !item.switchTo ? ' active' : ''}`}
-                onClick={() => navigate(item.switchTo || item.path)}
+                onClick={() => { navigate(item.switchTo || item.path); setMobileOpen(false); }}
                 style={item.switchTo ? { color:'#FF6B35', opacity:.85 } : undefined}
               >
                 {item.icon}
