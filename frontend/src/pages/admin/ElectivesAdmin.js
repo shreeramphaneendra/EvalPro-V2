@@ -222,7 +222,11 @@ function CreateGroupModal({ program, semester, onClose, onSaved }) {
     if (form.subjects.some(s=>!s.subjectCode||!s.subjectName)) { toast.error('Fill all subject details'); return; }
     setSaving(true);
     try {
-      await api.post('/api/electives/admin/groups', { ...form, program });
+      await api.post('/api/electives/admin/groups', {
+        ...form, program,
+        registrationOpen:  new Date(form.registrationOpen).toISOString(),
+        registrationClose: new Date(form.registrationClose).toISOString(),
+      });
       toast.success('Elective group created!');
       onSaved();
     } catch(e){ toast.error(e.response?.data?.message||'Failed'); }

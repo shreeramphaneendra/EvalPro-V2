@@ -21,6 +21,8 @@ export default function SlipTestExam({ testId, onFinish }) {
   const answersRef   = useRef({});   // mirror of answers state — always fresh
   const phaseRef     = useRef('loading');
   const violationsRef= useRef(0);
+  const dialogRef    = useRef(false);  // true while a confirm dialog is open — blur must be ignored
+  const examStartRef = useRef(0);      // grace period: ignore blur/fullscreen violations for first 3s
 
   const setPhaseSync = (p) => { phaseRef.current = p; setPhase(p); };
 
@@ -52,6 +54,7 @@ export default function SlipTestExam({ testId, onFinish }) {
       setAnswers(init);
       setExamData(data);
       setTimeLeft(data.remainingSec);
+      examStartRef.current = Date.now();
       setPhaseSync('exam');
     } catch(err) {
       toast.error(err.response?.data?.message || 'Failed to start test');
@@ -120,7 +123,7 @@ export default function SlipTestExam({ testId, onFinish }) {
 
     // TAB SWITCH → immediate auto-submit
     const onVisibility = async () => {
-      if (!document.hidden || submitting.current) return;
+      if (!document.hidden || submitting.current || dialogRef.current) return;
       clearInterval(timerRef.current);
       showWarning('⚠ Tab switch detected! Test is being submitted…', 'red');
 
@@ -134,29 +137,42 @@ export default function SlipTestExam({ testId, onFinish }) {
     };
 
     // WINDOW BLUR → warning + 3 strikes
-    const onBlur = async () => {
-      if (submitting.current) return;
-      violationsRef.current += 1;
-      const v = violationsRef.current;
-      setViolations(v);
+    // Guards against FALSE positives:
+    //  - confirm dialogs fire blur (dialogRef)
+    //  - fullscreen transition at start fires blur (3s grace period)
+    //  - transient blurs where focus returns instantly (300ms re-check)
+    const onBlur = () => {
+      if (submitting.current || dialogRef.current) return;
+      if (Date.now() - examStartRef.current < 3000) return; // grace period
 
-      try {
-        await api.post(`/api/sliptests/attempt/${attemptId.current}/violation`, {
-          type: 'window_blur', detail: `Window blur violation ${v}`
-        });
-      } catch {}
+      setTimeout(async () => {
+        // Focus came right back (notification popup, fullscreen transition) → not a violation
+        if (document.hasFocus() || submitting.current || dialogRef.current) return;
+        if (document.hidden) return; // real tab switch — visibilitychange handles it
 
-      if (v >= 3) {
-        showWarning('3 violations — auto-submitting your test!', 'red');
-        setTimeout(() => doSubmit('violations'), 1500);
-      } else {
-        showWarning(`⚠ Warning ${v}/3 — Stay in the exam window!`, 'amber');
-      }
+        violationsRef.current += 1;
+        const v = violationsRef.current;
+        setViolations(v);
+
+        try {
+          await api.post(`/api/sliptests/attempt/${attemptId.current}/violation`, {
+            type: 'window_blur', detail: `Window blur violation ${v}`
+          });
+        } catch {}
+
+        if (v >= 3) {
+          showWarning('3 violations — auto-submitting your test!', 'red');
+          setTimeout(() => doSubmit('violations'), 1500);
+        } else {
+          showWarning(`⚠ Warning ${v}/3 — Stay in the exam window!`, 'amber');
+        }
+      }, 300);
     };
 
     // FULLSCREEN EXIT → warn + re-request
     const onFullscreen = () => {
-      if (submitting.current) return;
+      if (submitting.current || dialogRef.current) return;
+      if (Date.now() - examStartRef.current < 3000) return; // grace period
       if (!document.fullscreenElement) {
         violationsRef.current += 1;
         const v = violationsRef.current;
@@ -466,9 +482,10 @@ export default function SlipTestExam({ testId, onFinish }) {
         {/* Submit button */}
         <button
           onClick={() => {
-            if (window.confirm(`Submit test now? You have answered ${answered}/${questions.length} questions.`)) {
-              doSubmit();
-            }
+            dialogRef.current = true;
+            const ok = window.confirm(`Submit test now? You have answered ${answered}/${questions.length} questions.`);
+            setTimeout(() => { dialogRef.current = false; }, 800);
+            if (ok) doSubmit();
           }}
           style={{
             padding:'10px 20px',
@@ -638,9 +655,10 @@ export default function SlipTestExam({ testId, onFinish }) {
         {/* Bottom submit */}
         <button
           onClick={() => {
-            if (window.confirm(`Submit test now? ${answered}/${questions.length} questions answered.`)) {
-              doSubmit();
-            }
+            dialogRef.current = true;
+            const ok = window.confirm(`Submit test now? ${answered}/${questions.length} questions answered.`);
+            setTimeout(() => { dialogRef.current = false; }, 800);
+            if (ok) doSubmit();
           }}
           style={{
             padding:'16px',marginTop:8,

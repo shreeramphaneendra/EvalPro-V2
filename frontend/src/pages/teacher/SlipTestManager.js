@@ -165,8 +165,8 @@ function CreateSlipTestModal({ subject, defaultSlot='ST1', onClose, onSaved }) {
         instructions: form.instructions,
         questions:    form.questions,
         duration:     Number(form.duration),
-        windowStart:  form.windowStart,
-        windowEnd:    form.windowEnd,
+        windowStart:  new Date(form.windowStart).toISOString(),
+        windowEnd:    new Date(form.windowEnd).toISOString(),
       });
       toast.success('Slip test created!');
       onSaved();
@@ -363,6 +363,16 @@ function ResultsModal({ testId, onClose }) {
     finally { setSaving(false); }
   };
 
+  const allowRetake = async (attemptId, name) => {
+    if (!window.confirm(`Clear ${name}'s attempt so they can retake? Their current answers and score will be deleted.`)) return;
+    try {
+      await api.delete(`/api/sliptests/${testId}/attempts/${attemptId}`);
+      toast.success('Attempt cleared — student can retake');
+      const { data: refreshed } = await api.get(`/api/sliptests/${testId}/attempts`);
+      setData(refreshed);
+    } catch(err) { toast.error(err.response?.data?.message || 'Failed'); }
+  };
+
   const pushToCIE = async () => {
     setSaving(true);
     try {
@@ -411,6 +421,7 @@ function ResultsModal({ testId, onClose }) {
                   <th className="center">Violations</th>
                   <th className="center">Auto-Sub</th>
                   <th className="center">Time</th>
+                  <th className="center">Retake</th>
                 </tr>
               </thead>
               <tbody>
@@ -469,6 +480,15 @@ function ResultsModal({ testId, onClose }) {
                     <td className="center" style={{fontSize:11,color:'var(--text2)'}}>
                       {r.attempt?.timeSpent
                         ? `${Math.floor(r.attempt.timeSpent/60)}m ${r.attempt.timeSpent%60}s`
+                        : '—'
+                      }
+                    </td>
+                    <td className="center">
+                      {r.attempt
+                        ? <button className="btn btn-ghost btn-xs" style={{color:'var(--brand)',fontSize:11}}
+                            onClick={() => allowRetake(r.attempt._id, r.student.name)}>
+                            ↺ Retake
+                          </button>
                         : '—'
                       }
                     </td>

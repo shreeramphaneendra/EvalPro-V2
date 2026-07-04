@@ -79,18 +79,40 @@ router.get('/student/available', studentAuth, async (req, res) => {
 
     // Find tests for student's subjects/semester
     // Subject model uses 'department' field, Student model uses 'branch'
+    const esc = s => String(s||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const subjects = await Subject.find({
-      department: student.branch, program: student.program, semester: student.semester
+      department: { $regex: `^${esc(student.branch)}$`, $options: 'i' },
+      program:    { $regex: `^${esc(student.program)}$`, $options: 'i' },
+      semester:   student.semester
     });
     const subjectIds = subjects.map(s => s._id);
 
-    const tests = await SlipTest.find({
+    // Tests in their live window OR tests the student already attempted
+    // (so scores stay visible after the window closes)
+    const sectionMatch = { $or: [{ section: null }, { section: String(student.section) }, { section: Number(student.section) }] };
+    const liveTests = await SlipTest.find({
       subject: { $in: subjectIds },
       status: 'active',
       windowStart: { $lte: now },
       windowEnd:   { $gte: now },
-      $or: [{ section: null }, { section: String(student.section) }, { section: Number(student.section) }]
+      ...sectionMatch
     }).populate('subject','name code');
+
+    const myAttempts = await SlipTestAttempt.find({ student: req.user._id }).select('slipTest');
+    const attemptedIds = myAttempts.map(a => a.slipTest);
+    const attemptedTests = await SlipTest.find({
+      _id: { $in: attemptedIds },
+      subject: { $in: subjectIds },
+    }).populate('subject','name code');
+
+    // Merge, dedupe by id
+    const seen = new Set();
+    const tests = [...liveTests, ...attemptedTests].filter(t => {
+      const id = t._id.toString();
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
 
     // Check attempt status for each
     const result = await Promise.all(tests.map(async t => {
@@ -218,6 +240,22 @@ router.delete('/:id', teacherAuth, async (req, res) => {
     await SlipTest.findByIdAndDelete(req.params.id);
     await SlipTestAttempt.deleteMany({ slipTest: req.params.id });
     res.json({ message: 'Deleted' });
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+
+// ── TEACHER: ALLOW RETAKE (delete a student's attempt) ───────────────────
+router.delete('/:id/attempts/:attemptId', teacherAuth, async (req, res) => {
+  try {
+    const test = await SlipTest.findById(req.params.id);
+    if (!test) return res.status(404).json({ message: 'Test not found' });
+    if (test.teacher.toString() !== req.user._id.toString() && !req.user.isAdmin)
+      return res.status(403).json({ message: 'Not your test' });
+    const attempt = await SlipTestAttempt.findById(req.params.attemptId);
+    if (!attempt || attempt.slipTest.toString() !== req.params.id)
+      return res.status(404).json({ message: 'Attempt not found' });
+    await SlipTestAttempt.findByIdAndDelete(req.params.attemptId);
+    res.json({ message: 'Attempt cleared — student can retake the test' });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
 
