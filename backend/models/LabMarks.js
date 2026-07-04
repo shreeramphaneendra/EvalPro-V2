@@ -49,11 +49,15 @@ labMarksSchema.methods.compute = function() {
   const ceil = n => Math.ceil(n);
 
   // ALI: avg(int1, int2) → ceil
-  const i1 = this.int1?.isAbsent ? 0 : (this.int1?.total ?? null);
-  const i2 = this.int2?.isAbsent ? 0 : (this.int2?.total ?? null);
+  // CBIT rule: if a student is ABSENT for one internal, only the attended
+  // internal is used (absent is NOT averaged in as 0).
+  const i1 = this.int1?.isAbsent ? null : (this.int1?.total ?? null);
+  const i2 = this.int2?.isAbsent ? null : (this.int2?.total ?? null);
   const intVals = [i1, i2].filter(v => v !== null);
   if (intVals.length > 0) {
     this.computed.ali = ceil(intVals.reduce((a,b)=>a+b,0) / intVals.length);
+  } else if (this.int1?.isAbsent && this.int2?.isAbsent) {
+    this.computed.ali = 0; // absent for both internals
   }
 
   // AWCIE: avg of all entered weekly totals → out of 30
@@ -63,8 +67,9 @@ labMarksSchema.methods.compute = function() {
   if (weeks.length > 0) {
     // Compute each week total first
     weeks.forEach(w => {
-      const parts = [w.pep, w.exp, w.pea, w.record, w.conduct].filter(v => v !== null);
-      w.total = parts.length > 0 ? parts.reduce((a,b)=>a+b,0) : null;
+      const parts = [w.pep, w.exp, w.pea, w.record, w.conduct].filter(v => v !== null && v !== undefined);
+      if (parts.length > 0) w.total = parts.reduce((a,b)=>a+b,0);
+      // else: keep any total that was provided directly (import paths)
     });
     const weekTotals = weeks.map(w => w.total).filter(v => v !== null);
     if (weekTotals.length > 0) {

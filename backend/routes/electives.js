@@ -285,18 +285,41 @@ router.post('/admin/groups/:id/allot', adminAuth, async (req, res) => {
         electiveGroup: group._id,
         allottedSubjectCode: sub.subjectCode,
         status: 'confirmed'
-      }).select('student allottedSplitLabel');
+      }).populate('student', 'usn');
 
-      // Distribute to assignments by splitLabel
-      for (const asgn of sub.assignments) {
-        if (sub.assignments.length === 1) {
-          // Single teacher — gets all students
-          asgn.studentIds = confirmed.map(c => c.student);
-        } else {
-          // Multiple teachers — split by splitLabel
-          asgn.studentIds = confirmed
-            .filter(c => c.allottedSplitLabel === asgn.splitLabel || !c.allottedSplitLabel)
-            .map(c => c.student);
+      if (sub.assignments.length <= 1) {
+        // Single teacher — gets all students
+        if (sub.assignments.length === 1)
+          sub.assignments[0].studentIds = confirmed.map(c => c.student._id);
+      } else {
+        // Multiple teachers (Split A/B):
+        // 1. Choices with an explicit split label go to that split.
+        // 2. Remaining students are sorted by roll number and split into
+        //    contiguous equal chunks (first half -> A, second half -> B).
+        const labels    = sub.assignments.map(a => a.splitLabel);
+        const explicit  = confirmed.filter(ch => ch.allottedSplitLabel && labels.includes(ch.allottedSplitLabel));
+        const remaining = confirmed.filter(ch => !ch.allottedSplitLabel || !labels.includes(ch.allottedSplitLabel))
+          .sort((a, b) => String(a.student?.usn||'').localeCompare(String(b.student?.usn||'')));
+
+        const buckets = {};
+        labels.forEach(l => { buckets[l] = []; });
+        explicit.forEach(ch => buckets[ch.allottedSplitLabel].push(ch));
+
+        const chunk = Math.ceil(remaining.length / sub.assignments.length);
+        sub.assignments.forEach((asgn, i) => {
+          const slice = remaining.slice(i * chunk, (i + 1) * chunk);
+          buckets[asgn.splitLabel].push(...slice);
+        });
+
+        // Save distribution + write the split label back to each choice
+        for (const asgn of sub.assignments) {
+          asgn.studentIds = buckets[asgn.splitLabel].map(ch => ch.student._id);
+          for (const ch of buckets[asgn.splitLabel]) {
+            if (ch.allottedSplitLabel !== asgn.splitLabel) {
+              ch.allottedSplitLabel = asgn.splitLabel;
+              await ch.save();
+            }
+          }
         }
       }
       sub.status = 'running';
