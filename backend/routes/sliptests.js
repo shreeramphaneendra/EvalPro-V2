@@ -219,7 +219,7 @@ router.post('/:id/close', teacherAuth, async (req, res) => {
       let pushed = 0;
       for (const attempt of allAttempts) {
         if (!attempt.graded) continue; // autoGradeMCQ sets graded=true for MCQ-only
-        let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject });
+        let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject, academicYear: year });
         if (!tm) tm = new TheoryMarks({ student: attempt.student, subject: test.subject, teacher: test.teacher, academicYear: year });
         if (tm.status === 'approved') tm.status = 'submitted';
         const field = test.slot.toLowerCase();
@@ -332,7 +332,7 @@ router.post('/:id/grade', teacherAuth, async (req, res) => {
       // Push to CIE if requested
       if (pushToCIE) {
         const year = getAcademicYear();
-        let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject });
+        let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject, academicYear: year });
         if (!tm) tm = new TheoryMarks({ student: attempt.student, subject: test.subject, teacher: req.user._id, academicYear: year });
         if (tm.status === 'approved') tm.status = 'submitted';
         const field = test.slot.toLowerCase(); // 'st1', 'st2', 'st3'
@@ -358,7 +358,7 @@ router.post('/:id/push-to-cie', teacherAuth, async (req, res) => {
     let pushed = 0;
 
     for (const attempt of attempts) {
-      let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject });
+      let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject, academicYear: year });
       if (!tm) tm = new TheoryMarks({ student: attempt.student, subject: test.subject, teacher: req.user._id, academicYear: year });
       if (tm.status === 'approved') tm.status = 'submitted';
       const field = test.slot.toLowerCase();
@@ -600,7 +600,7 @@ async function autoGradeMCQ(attempt) {
         try { return JSON.parse(require('fs').readFileSync(require('path').join(__dirname,'../config.json'),'utf8')).academicYear || '2026-27'; }
         catch { return '2026-27'; }
       })();
-      let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject });
+      let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject, academicYear: year });
       if (!tm) {
         tm = new TheoryMarks({
           student: attempt.student, subject: test.subject,

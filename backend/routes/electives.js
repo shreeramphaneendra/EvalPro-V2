@@ -172,9 +172,11 @@ router.get('/admin/groups/:id/summary', adminAuth, async (req, res) => {
     });
 
     // Students who didn't submit — use currentSemester (what they're in now)
+    const escNS = s => String(s||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const allStudents = await Student.find({
-      branch: group.department, program: group.program,
-      semester: group.currentSemester // FIX: query by currentSemester not targetSemester
+      branch:  { $regex: `^${escNS(group.department)}$`, $options: 'i' },
+      program: { $regex: `^${escNS(group.program)}$`, $options: 'i' },
+      semester: group.currentSemester
     });
     const submitted = new Set(choices.map(c => c.student?._id?.toString()));
     const notSubmitted = allStudents
@@ -351,8 +353,9 @@ router.get('/student/available', studentAuth, async (req, res) => {
     const student = await Student.findById(req.user._id);
     const year    = getConfig().academicYear;
 
+    const esc = s => String(s||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const groups = await ElectiveGroup.find({
-      department:      student.branch,
+      department:      { $regex: `^${esc(student.branch)}$`, $options: 'i' },
       program:         student.program,
       currentSemester: student.semester, // student is in currentSemester right now
       academicYear:    year,
