@@ -39,11 +39,17 @@ router.post('/create', teacherAuth, async (req, res) => {
     });
 
     if (existing) {
-      // Update existing
+      // Update existing — this is a re-run of the test, so clear ALL old attempts
+      // (otherwise students who attempted the previous run stay locked out with stale scores)
+      const cleared = await SlipTestAttempt.deleteMany({ slipTest: existing._id });
       Object.assign(existing, { title, instructions, questions, totalMarks, duration,
         windowStart: new Date(windowStart), windowEnd: new Date(windowEnd), status:'draft' });
       await existing.save();
-      return res.json(existing);
+      return res.json({ ...existing.toObject(),
+        _clearedAttempts: cleared.deletedCount,
+        message: cleared.deletedCount > 0
+          ? `Test updated · ${cleared.deletedCount} previous attempt(s) cleared — all students can attempt fresh`
+          : 'Test updated' });
     }
 
     const test = new SlipTest({

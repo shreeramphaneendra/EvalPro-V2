@@ -157,7 +157,7 @@ function CreateSlipTestModal({ subject, defaultSlot='ST1', onClose, onSaved }) {
     if (!form.windowStart || !form.windowEnd) { toast.error('Set test window'); return; }
     setSaving(true);
     try {
-      await api.post('/api/sliptests/create', {
+      const res = await api.post('/api/sliptests/create', {
         subjectId:    subject._id,
         slot:         form.slot,
         section:      form.section || null,
@@ -168,7 +168,7 @@ function CreateSlipTestModal({ subject, defaultSlot='ST1', onClose, onSaved }) {
         windowStart:  new Date(form.windowStart).toISOString(),
         windowEnd:    new Date(form.windowEnd).toISOString(),
       });
-      toast.success('Slip test created!');
+      toast.success(res?.data?.message || 'Slip test created!');
       onSaved();
     } catch(err) { toast.error(err.response?.data?.message || 'Failed'); }
     finally { setSaving(false); }
