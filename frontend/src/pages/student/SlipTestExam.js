@@ -761,8 +761,10 @@ export default function SlipTestExam({ testId, onFinish }) {
             fontSize:13,color:'#1D4ED8',lineHeight:1.7
           }}>
             📋 Your answers have been submitted successfully.<br/>
-            <strong>Short answers will be graded by your teacher.</strong><br/>
-            Your score will appear here once graded.
+            <strong>{result?.resultsAt
+              ? `Results will be released at ${new Date(result.resultsAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})} once the test window closes.`
+              : 'Short answers will be graded by your teacher.'}</strong><br/>
+            Check the Slip Tests page later to see your score.
           </div>
         ) : (
           <div style={{padding:20,margin:'20px 0'}}>

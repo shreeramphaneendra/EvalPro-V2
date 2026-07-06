@@ -16,6 +16,52 @@ const getAcademicYear = () => {
   } catch { return '2026-27'; }
 };
 
+
+// ── HELPER: auto-close test when its window has ended ─────────────────────
+// Called lazily from teacher + student fetches so the test truly stops itself:
+// in-progress attempts are submitted, MCQ auto-graded, MCQ-only scores pushed to CIE.
+async function autoCloseIfEnded(test) {
+  try {
+    if (!test || test.status !== 'active') return test;
+    if (new Date() < new Date(test.windowEnd)) return test;
+
+    const inProgress = await SlipTestAttempt.find({ slipTest: test._id, status: 'in_progress' });
+    for (const attempt of inProgress) {
+      attempt.status = 'submitted';
+      attempt.autoSubmitted = true;
+      attempt.autoSubmitReason = 'window_ended';
+      attempt.submitTime = new Date(test.windowEnd);
+      attempt.timeSpent = Math.floor((new Date(test.windowEnd) - new Date(attempt.startTime)) / 1000);
+      await autoGradeMCQ(attempt);
+      await attempt.save();
+    }
+
+    const mcqOnly = test.questions.every(q => q.type === 'mcq');
+    if (mcqOnly) {
+      const year = getAcademicYear();
+      const attempts = await SlipTestAttempt.find({ slipTest: test._id, status: 'submitted', graded: true });
+      for (const attempt of attempts) {
+        let tm = await TheoryMarks.findOne({ student: attempt.student, subject: test.subject, academicYear: year });
+        if (!tm) tm = new TheoryMarks({ student: attempt.student, subject: test.subject, teacher: test.teacher, academicYear: year });
+        if (tm.status === 'approved') tm.status = 'submitted';
+        const field = test.slot.toLowerCase();
+        if (!tm[field]) tm[field] = {};
+        tm[field].total = attempt.scaledScore ?? 0;
+        tm[field].isAbsent = false;
+        tm[field].questions = [];
+        tm.compute();
+        await tm.save();
+        attempt.pushedToCIE = true;
+        await attempt.save();
+      }
+    }
+
+    test.status = 'closed';
+    await test.save();
+    return test;
+  } catch { return test; }
+}
+
 // ── TEACHER: CREATE/UPDATE SLIP TEST ──────────────────────────────────────
 router.post('/create', teacherAuth, async (req, res) => {
   try {
@@ -70,9 +116,10 @@ router.get('/my-tests', teacherAuth, async (req, res) => {
     const { subjectId } = req.query;
     const query = { teacher: req.user._id };
     if (subjectId) query.subject = subjectId;
-    const tests = await SlipTest.find(query)
+    let tests = await SlipTest.find(query)
       .populate('subject','name code semester')
       .sort({ createdAt: -1 });
+    tests = await Promise.all(tests.map(t => autoCloseIfEnded(t)));
     res.json(tests);
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
@@ -120,6 +167,10 @@ router.get('/student/available', studentAuth, async (req, res) => {
       return true;
     });
 
+    // Auto-close any whose window ended (finalizes grading + CIE push)
+    for (const t of tests) await autoCloseIfEnded(t);
+
+    const windowOver = (t) => new Date() >= new Date(t.windowEnd);
     // Check attempt status for each
     const result = await Promise.all(tests.map(async t => {
       const attempt = await SlipTestAttempt.findOne({ slipTest: t._id, student: req.user._id });
@@ -131,8 +182,9 @@ router.get('/student/available', studentAuth, async (req, res) => {
           questionCount: t.questions.length
         },
         attemptStatus: attempt?.status || 'not_started',
-        scaledScore:   attempt?.scaledScore,
-        graded:        attempt?.graded,
+        scaledScore:   windowOver(t) ? attempt?.scaledScore : null,
+        graded:        windowOver(t) ? attempt?.graded : false,
+        resultsAt:     windowOver(t) ? null : t.windowEnd,
       };
     }));
 
@@ -268,8 +320,9 @@ router.delete('/:id/attempts/:attemptId', teacherAuth, async (req, res) => {
 // ── TEACHER: GET ALL ATTEMPTS FOR A TEST ─────────────────────────────────
 router.get('/:id/attempts', teacherAuth, async (req, res) => {
   try {
-    const test = await SlipTest.findById(req.params.id);
+    let test = await SlipTest.findById(req.params.id);
     if (!test) return res.status(404).json({ message: 'Not found' });
+    test = await autoCloseIfEnded(test);
 
     const attempts = await SlipTestAttempt.find({ slipTest: req.params.id })
       .populate('student','name usn section')
@@ -474,21 +527,32 @@ router.get('/attempt/:attemptId/result', studentAuth, async (req, res) => {
     if (!attempt || attempt.student.toString() !== req.user._id.toString())
       return res.status(403).json({ message: 'Not your attempt' });
 
-    // Only show result after graded or if no short answers
-    const hasShort = attempt.answers.some(a => a.type === 'short');
-    const canShow  = attempt.graded || !hasShort;
+    // Results are held until the test window closes — an early finisher must not
+    // be able to see scores or which answers were correct while others still write.
+    const windowOver = new Date() >= new Date(attempt.slipTest.windowEnd);
+    const hasShort   = attempt.answers.some(a => a.type === 'short');
+    const canShow    = windowOver && (attempt.graded || !hasShort);
+
+    // Strip grading info from answers until results are released
+    const safeAnswers = canShow ? attempt.answers : attempt.answers.map(a => ({
+      qNo: a.qNo, type: a.type,
+      selectedOption: a.selectedOption, textAnswer: a.textAnswer,
+      isCorrect: null, marksAwarded: null, maxMarks: a.maxMarks,
+    }));
 
     res.json({
       status:        attempt.status,
       scaledScore:   canShow ? attempt.scaledScore : null,
-      mcqScore:      attempt.mcqScore,
-      graded:        attempt.graded,
+      mcqScore:      canShow ? attempt.mcqScore : null,
+      graded:        canShow ? attempt.graded : false,
       violationCount:attempt.violationCount,
       autoSubmitted: attempt.autoSubmitted,
+      autoSubmitReason: attempt.autoSubmitReason,
       timeSpent:     attempt.timeSpent,
-      answers:       attempt.answers,
+      answers:       safeAnswers,
       slot:          attempt.slot,
       canShowScore:  canShow,
+      resultsAt:     canShow ? null : attempt.slipTest.windowEnd,
     });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });

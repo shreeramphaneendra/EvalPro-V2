@@ -402,7 +402,11 @@ function StudentSlipTests() {
                           </div>
                         )}
                         {status==='submitted' && !t.graded && (
-                          <p style={{marginTop:8,fontSize:12,color:'var(--text3)'}}>Awaiting teacher grading for short answers</p>
+                          <p style={{marginTop:8,fontSize:12,color:'var(--text3)'}}>
+                            {t.resultsAt
+                              ? `🔒 Results at ${new Date(t.resultsAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})} — after the test window closes`
+                              : 'Awaiting teacher grading for short answers'}
+                          </p>
                         )}
                       </div>
                       {status !== 'submitted' && (

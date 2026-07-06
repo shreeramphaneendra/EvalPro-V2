@@ -469,6 +469,47 @@ router.get('/promotion/preview', auth, async (req, res) => {
 });
 
 // ── PROMOTION: execute ──────────────────────────────────────────────────────
+
+// ── DETAINED STUDENT: REASSIGN TO ANOTHER BATCH ───────────────────────────
+// A detained student repeats the semester with the junior batch. Admin moves
+// them: new section + mentoring batch, reactivates them so they can register
+// electives / take tests with the new batch. Old marks stay untouched
+// (year-scoped, never deleted).
+router.post('/students/:id/reassign', auth, async (req, res) => {
+  try {
+    const { department } = scopeOf(req);
+    const { section, mentoringBatch, reactivate = true } = req.body;
+    const s = await Student.findById(req.params.id);
+    if (!s) return res.status(404).json({ message: 'Student not found' });
+    if (s.branch !== department && !req.user.isAdmin)
+      return res.status(403).json({ message: 'Not your department' });
+
+    const changes = [];
+    if (section && String(section) !== s.section) {
+      changes.push(`section ${s.section} → ${section}`);
+      s.section = String(section);
+    }
+    if (mentoringBatch && mentoringBatch !== s.mentoringBatch) {
+      changes.push(`batch ${s.mentoringBatch || '—'} → ${mentoringBatch}`);
+      s.mentoringBatch = mentoringBatch;
+      // Detach old mentor for the CURRENT semester so the junior batch's
+      // mentor assignment (Sem+Section+Batch) picks this student up cleanly
+      await MentoringRecord.updateMany(
+        { student: s._id, semester: s.semester },
+        { $unset: { mentor: 1 } }
+      );
+    }
+    if (reactivate && s.status === 'Detained') {
+      changes.push('status Detained → Active');
+      s.status = 'Active';
+    }
+    await s.save();
+    res.json({ message: changes.length
+      ? `Reassigned: ${changes.join(', ')}. Re-run Assign Mentors for the new batch to link their mentor.`
+      : 'No changes made', student: s });
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
 router.post('/promotion/execute', auth, async (req, res) => {
   try {
     const { department, programs } = scopeOf(req);

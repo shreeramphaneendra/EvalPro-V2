@@ -525,6 +525,17 @@ function StudentsPage() {
     try{ await api.post(`/api/admin/students/${s._id}/reset-password`); toast.success(`Password reset to ${s.usn}`); }
     catch(err){ toast.error(err.response?.data?.message||'Failed'); }
   };
+  const reassign = async s => {
+    const section = window.prompt(`Reassign ${s.name} to the junior batch.\n\nNew section (current: ${s.section}):`, s.section);
+    if (section === null) return;
+    const batch = window.prompt(`New mentoring batch (current: ${s.mentoringBatch||'—'}), e.g. M1:`, s.mentoringBatch||'M1');
+    if (batch === null) return;
+    const reactivate = s.status==='Detained' ? window.confirm('Reactivate the student (Detained → Active) so they can take tests and register electives with the new batch?') : false;
+    try{
+      const { data } = await api.post(`/api/admin/students/${s._id}/reassign`, { section, mentoringBatch: batch, reactivate });
+      toast.success(data.message); load();
+    } catch(err){ toast.error(err.response?.data?.message||'Failed'); }
+  };
 
   return (
     <div className="a-page">
@@ -582,6 +593,7 @@ function StudentsPage() {
                     <td className="center">
                       <div className="a-actions">
                         <button className="a-action-btn" title={`Reset to ${s.usn}`} onClick={()=>resetPw(s)}><KeyRound size={13}/></button>
+                        {s.status==='Detained' && <button className="a-action-btn" title="Reassign to junior batch" style={{color:'var(--brand)'}} onClick={()=>reassign(s)}>↪</button>}
                         <button className="a-action-btn a-action-btn--danger" onClick={()=>del(s._id)}><Trash2 size={13}/></button>
                       </div>
                     </td>
