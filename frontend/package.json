@@ -14,7 +14,7 @@
     "xlsx": "^0.18.5"
   },
   "scripts": {
-    "start": "HOST=localhost react-scripts start",
+    "start": "react-scripts start",
     "build": "react-scripts build"
   },
   "proxy": "http://localhost:5000",
