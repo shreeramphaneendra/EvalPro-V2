@@ -22,6 +22,7 @@ const NAV = [
   { path:'/student/mentor',      label:'My Mentor',    icon:<UserCheck size={15}/> },
   { path:'/student/assignments', label:'Assignments',  icon:<FileText size={15}/> },
   { path:'/student/sliptests',   label:'Slip Tests',   icon:<span style={{fontSize:13}}>🛡</span> },
+  { path:'/student/activity',    label:'Activity Points', icon:<span style={{fontSize:13}}>⭐</span> },
   { path:'/student/electives',   label:'Electives',    icon:<BookOpen size={15}/> },
   { type:'section', label:'Account' },
   { path:'/student/settings',    label:'Settings',     icon:<Settings size={15}/> },
@@ -37,6 +38,7 @@ export default function StudentDashboard() {
         <Route path="/mentor"      element={<MentorPage/>}/>
         <Route path="/assignments" element={<StudentAssignmentsPage/>}/>
         <Route path="/sliptests"   element={<StudentSlipTests/>}/>
+        <Route path="/activity"    element={<ActivityPointsPage/>}/>
         <Route path="/electives"   element={<StudentElectives/>}/>
         <Route path="/settings"    element={<StudentSettings/>}/>
       </Routes>
@@ -323,6 +325,96 @@ function StudentOverview() {
   );
 }
 
+
+
+/* ── ACTIVITY POINTS PAGE ───────────────────────────────────────────── */
+function ActivityPointsPage() {
+  const { user } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get('/api/student/activity-points')
+      .then(r => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{textAlign:'center',padding:60}}><Spinner/></div>;
+  if (!data) return (
+    <div className="s-page">
+      <div className="s-page-header"><h2 className="s-page-title">Activity Points</h2></div>
+      <div className="s-card s-card--empty">
+        <div className="s-empty-icon">⭐</div>
+        <h3 className="s-empty-title">No activity records yet</h3>
+        <p className="s-empty-sub">Your mentor will add activity points each semester</p>
+      </div>
+    </div>
+  );
+
+  const pct = Math.min(100, (data.total / 60) * 100);
+  const color = data.total >= 60 ? 'var(--mint)' : data.total >= 40 ? 'var(--amber)' : 'var(--red)';
+
+  return (
+    <div className="s-page">
+      <div className="s-page-header">
+        <h2 className="s-page-title">Activity Points</h2>
+        <p className="s-page-sub">Minimum 60 points required for graduation</p>
+      </div>
+
+      {/* Running total card */}
+      <div className="s-card" style={{padding:'24px 20px',marginBottom:14}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:12}}>
+          <div>
+            <div style={{fontFamily:"'Outfit',sans-serif",fontWeight:800,fontSize:40,color,lineHeight:1}}>
+              {data.total}
+            </div>
+            <div style={{fontSize:13,color:'var(--text2)',marginTop:4}}>/ 60 required for graduation</div>
+          </div>
+          {data.total >= 60
+            ? <div style={{padding:'8px 18px',background:'var(--mint-l)',border:'1px solid var(--mint)',borderRadius:'var(--r3)',color:'var(--mint-d)',fontWeight:700,fontSize:13}}>✓ Eligible</div>
+            : <div style={{padding:'8px 18px',background:'var(--amber-l)',border:'1px solid var(--amber)',borderRadius:'var(--r3)',color:'var(--amber-d)',fontWeight:700,fontSize:13}}>{60 - data.total} more needed</div>
+          }
+        </div>
+        {/* Progress bar */}
+        <div style={{background:'var(--border)',borderRadius:6,height:10,overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:6,transition:'width .4s'}}/>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',marginTop:6,fontSize:11,color:'var(--text3)'}}>
+          <span>0</span><span>30</span><span>60</span>
+        </div>
+      </div>
+
+      {/* Per-semester breakdown */}
+      {data.semesters?.length > 0 && (
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          {data.semesters.map((sem,i) => (
+            <div key={i} className="s-card" style={{padding:'14px 18px'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:14}}>Semester {sem.semester}</div>
+                  <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{sem.academicYear}</div>
+                </div>
+                <div style={{fontFamily:"'Outfit',sans-serif",fontWeight:800,fontSize:22,color:'var(--brand)'}}>
+                  {sem.activityPoints ?? 0} pts
+                </div>
+              </div>
+              {sem.componentMarks?.length > 0 && (
+                <div style={{marginTop:10,display:'flex',gap:8,flexWrap:'wrap'}}>
+                  {sem.componentMarks.map((comp,j) => (
+                    <div key={j} style={{padding:'4px 12px',background:'var(--surface2)',borderRadius:20,fontSize:12,color:'var(--text2)'}}>
+                      {comp.label}: <strong>{comp.marks}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ── STUDENT SLIP TESTS ──────────────────────────────────────────────── */
 function StudentSlipTests() {
