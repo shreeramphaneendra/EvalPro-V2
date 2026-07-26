@@ -10,6 +10,7 @@ const getAcademicYear = () => {
 
 const multer     = require('multer');
 const { protect, teacherOnly, studentOnly, activeStudentOnly } = require('../middleware/auth');
+const { logAudit, notify, toStudents } = require('../utils/audit');
 const Assignment = require('../models/Assignment');
 const Submission = require('../models/Submission');
 const Subject    = require('../models/Subject');
@@ -70,6 +71,34 @@ router.post('/teacher/assignments', protect, teacherOnly, upload.single('attachm
       doc,
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+
+    // Notify the students who have to submit it
+    try {
+      const Student = require('../models/Student');
+      const esc = s => String(s||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const studs = await Student.find({
+        branch:   { $regex: `^${esc(subject.department)}$`, $options: 'i' },
+        program:  { $regex: `^${esc(subject.program)}$`,    $options: 'i' },
+        semester: subject.semester,
+        status:   { $ne: 'Graduated' },
+      }).select('_id').lean();
+      const sent = await notify(toStudents(studs.map(s => s._id)), {
+        type: 'assignment_posted',
+        title: `New ${type === 'assignment' ? 'assignment' : type} — ${subject.name}`,
+        body:  assignment.dueDate
+          ? `Due ${new Date(assignment.dueDate).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`
+          : 'Check the Assignments page for details.',
+        link:  '/student/assignments', icon: '📝',
+      });
+      await logAudit(req, {
+        action: 'assignment.post', category: 'marks',
+        targetType: 'Subject', targetId: subject._id,
+        targetLabel: `${subject.name} (${subject.code})`,
+        description: `Posted ${type} #${slotNo} — notified ${sent} student(s)`,
+        academicYear,
+      });
+    } catch(err) { console.error('[assignment notify]', err.message); }
+
     res.json(assignment);
   } catch(e) { res.status(500).json({ message: e.message }); }
 });

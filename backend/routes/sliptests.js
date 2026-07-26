@@ -5,6 +5,7 @@ const SlipTestAttempt = require('../models/SlipTestAttempt');
 const Student     = require('../models/Student');
 const Subject     = require('../models/Subject');
 const TheoryMarks = require('../models/TheoryMarks');
+const { logAudit, notify, toStudents } = require('../utils/audit');
 
 const teacherAuth = [protect, teacherOnly];
 const studentAuth  = [protect, studentOnly];        // read-only (view list/result)
@@ -59,6 +60,18 @@ async function autoCloseIfEnded(test) {
 
     test.status = 'closed';
     await test.save();
+
+    // Results are now unlocked — tell everyone who attempted
+    try {
+      const attempted = await SlipTestAttempt.find({ slipTest: test._id, status: 'submitted' }).select('student').lean();
+      await notify(attempted.map(a => ({ id: a.student, model: 'Student' })), {
+        type: 'sliptest_result',
+        title: `${test.slot} slip test results are out`,
+        body:  `${test.title} — view your score now.`,
+        link:  '/student/sliptests', icon: '✅',
+      });
+    } catch {}
+
     return test;
   } catch { return test; }
 }
@@ -240,7 +253,37 @@ router.post('/:id/publish', teacherAuth, async (req, res) => {
     if (!test.questions.length) return res.status(400).json({ message: 'No questions' });
     test.status = 'active';
     await test.save();
-    res.json({ message: 'Test published — students can now see it' });
+
+    // Notify the students who can take it
+    const subj = await Subject.findById(test.subject);
+    let sent = 0;
+    if (subj) {
+      const esc = s => String(s||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const q = {
+        branch:   { $regex: `^${esc(subj.department)}$`, $options: 'i' },
+        program:  { $regex: `^${esc(subj.program)}$`,    $options: 'i' },
+        semester: subj.semester,
+        status:   { $ne: 'Graduated' },
+      };
+      if (test.section) q.section = String(test.section);
+      const students = await Student.find(q).select('_id').lean();
+      sent = await notify(toStudents(students.map(s => s._id)), {
+        type: 'sliptest_published',
+        title: `${test.slot} slip test is live — ${subj.name}`,
+        body:  `${test.title} · ${test.duration} min · closes ${new Date(test.windowEnd).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`,
+        link:  '/student/sliptests', icon: '🛡',
+      });
+    }
+
+    await logAudit(req, {
+      action: 'sliptest.publish', category: 'sliptest', severity: 'warning',
+      targetType: 'SlipTest', targetId: test._id,
+      targetLabel: `${test.title} (${test.slot})`,
+      description: `Published slip test "${test.title}" — notified ${sent} student(s)`,
+      academicYear: getAcademicYear(),
+    });
+
+    res.json({ message: `Test published — ${sent} student(s) notified` });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
 

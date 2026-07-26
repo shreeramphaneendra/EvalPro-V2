@@ -121,6 +121,28 @@ function CreateSlipTestModal({ subject, defaultSlot='ST1', onClose, onSaved }) {
     questions: []
   });
   const [saving, setSaving] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
+
+  const saveToBank = async () => {
+    const valid = form.questions.filter(q => q.text?.trim());
+    if (!valid.length) { toast.error('Add some questions first'); return; }
+    try {
+      const { data } = await api.post(`/api/questionbank/${subject._id}/add`, { questions: valid });
+      toast.success(data.message);
+    } catch(e) { toast.error(e.response?.data?.message || 'Failed'); }
+  };
+
+  const importFromBank = (picked) => {
+    const start = form.questions.length;
+    const mapped = picked.map((q, i) => ({
+      qNo: start + i + 1, type: q.type, text: q.text, marks: q.marks || 1,
+      options: q.options || ['','','',''], correct: q.correct ?? 0, hint: q.hint || ''
+    }));
+    setForm(f => ({ ...f, questions: [...f.questions, ...mapped] }));
+    api.post(`/api/questionbank/${subject._id}/used`, { questionIds: picked.map(q=>q._id) }).catch(()=>{});
+    setBankOpen(false);
+    toast.success(`${picked.length} question(s) imported`);
+  };
 
   const addQ = (type) => {
     const qNo = form.questions.length + 1;
@@ -239,9 +261,12 @@ function CreateSlipTestModal({ subject, defaultSlot='ST1', onClose, onSaved }) {
                 </span>
               )}
             </div>
-            <div style={{display:'flex',gap:8}}>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
               <button className="btn btn-white btn-sm" onClick={() => addQ('mcq')}><Plus size={12}/> MCQ</button>
               <button className="btn btn-white btn-sm" onClick={() => addQ('short')}><Plus size={12}/> Short Answer</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setBankOpen(true)}>📚 From Bank</button>
+              {form.questions.some(q=>q.text?.trim()) &&
+                <button className="btn btn-ghost btn-sm" onClick={saveToBank}>💾 Save to Bank</button>}
             </div>
           </div>
 
@@ -320,6 +345,119 @@ function CreateSlipTestModal({ subject, defaultSlot='ST1', onClose, onSaved }) {
             {saving ? <Spinner/> : 'Save as Draft'}
           </button>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+
+      {bankOpen && (
+        <QuestionBankPicker subject={subject}
+          onClose={()=>setBankOpen(false)} onImport={importFromBank}/>
+      )}
+    </Modal>
+  );
+}
+
+/* ── QUESTION BANK PICKER ─────────────────────────────────────────────── */
+function QuestionBankPicker({ subject, onClose, onImport }) {
+  const [bank,    setBank]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [picked,  setPicked]  = useState({});
+  const [search,  setSearch]  = useState('');
+  const [typeF,   setTypeF]   = useState('all');
+
+  useEffect(() => {
+    api.get(`/api/questionbank/${subject._id}`)
+      .then(r => setBank(r.data))
+      .catch(() => setBank({ questions: [] }))
+      .finally(() => setLoading(false));
+  }, [subject._id]);
+
+  const remove = async (qid) => {
+    if (!window.confirm('Remove this question from the bank permanently?')) return;
+    try {
+      await api.delete(`/api/questionbank/${subject._id}/${qid}`);
+      setBank(b => ({ ...b, questions: b.questions.filter(q => q._id !== qid) }));
+      toast.success('Removed from bank');
+    } catch(e) { toast.error(e.response?.data?.message || 'Failed'); }
+  };
+
+  const qs = (bank?.questions || [])
+    .filter(q => typeF === 'all' || q.type === typeF)
+    .filter(q => !search || q.text.toLowerCase().includes(search.toLowerCase()));
+  const chosen = qs.filter(q => picked[q._id]);
+
+  return (
+    <Modal open onClose={onClose} width={720} title={`Question Bank — ${subject.name}`}>
+      <div style={{display:'flex',flexDirection:'column',gap:12,maxHeight:'70vh'}}>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <input className="input" style={{flex:1,minWidth:180}} placeholder="Search questions…"
+            value={search} onChange={e=>setSearch(e.target.value)}/>
+          <select className="input" style={{width:140}} value={typeF} onChange={e=>setTypeF(e.target.value)}>
+            <option value="all">All types</option>
+            <option value="mcq">MCQ only</option>
+            <option value="short">Short answer</option>
+          </select>
+        </div>
+
+        {loading ? <div style={{textAlign:'center',padding:36}}><Spinner/></div>
+        : qs.length === 0 ? (
+          <div style={{textAlign:'center',padding:'36px 20px',color:'var(--text3)'}}>
+            <div style={{fontSize:30,marginBottom:8}}>📚</div>
+            <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>
+              {bank?.questions?.length ? 'No questions match your filter' : 'Bank is empty'}
+            </div>
+            <div style={{fontSize:12}}>
+              Create a test, then click <strong>Save to Bank</strong> to reuse those questions later.
+            </div>
+          </div>
+        ) : (
+          <div style={{overflowY:'auto',display:'flex',flexDirection:'column',gap:8,flex:1}}>
+            {qs.map(q => (
+              <label key={q._id} style={{
+                display:'flex',gap:10,padding:'11px 13px',cursor:'pointer',
+                border:`1px solid ${picked[q._id]?'var(--brand)':'var(--border)'}`,
+                background:picked[q._id]?'var(--brand-l)':'var(--surface2)',
+                borderRadius:'var(--r2)'
+              }}>
+                <input type="checkbox" checked={!!picked[q._id]} style={{marginTop:3,flexShrink:0}}
+                  onChange={e=>setPicked(p=>({...p,[q._id]:e.target.checked}))}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
+                    <span className={`tag ${q.type==='mcq'?'tag-blue':'tag-mint'}`} style={{fontSize:9}}>
+                      {q.type==='mcq'?'MCQ':'SHORT'}
+                    </span>
+                    <span style={{fontSize:11,color:'var(--text3)'}}>{q.marks} mark{q.marks!==1?'s':''}</span>
+                    {q.timesUsed > 0 && <span style={{fontSize:11,color:'var(--text3)'}}>· used {q.timesUsed}×</span>}
+                  </div>
+                  <div style={{fontSize:13,color:'var(--text)',lineHeight:1.5}}>{q.text}</div>
+                  {q.type === 'mcq' && q.options?.length > 0 && (
+                    <div style={{fontSize:11.5,color:'var(--text2)',marginTop:4}}>
+                      {q.options.map((o,i)=>(
+                        <span key={i} style={{marginRight:10,fontWeight:i===q.correct?700:400,
+                          color:i===q.correct?'var(--mint-d)':'var(--text2)'}}>
+                          {String.fromCharCode(65+i)}. {o}{i===q.correct?' ✓':''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button className="btn btn-ghost btn-xs" style={{color:'var(--red)',flexShrink:0}}
+                  onClick={(e)=>{e.preventDefault();remove(q._id);}}>
+                  <Trash2 size={12}/>
+                </button>
+              </label>
+            ))}
+          </div>
+        )}
+
+        <div style={{display:'flex',gap:10,alignItems:'center',borderTop:'1px solid var(--border)',paddingTop:12}}>
+          <button className="btn btn-brand" disabled={!chosen.length}
+            onClick={()=>onImport(chosen)}>
+            Import {chosen.length > 0 ? `${chosen.length} question(s)` : ''}
+          </button>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <span style={{marginLeft:'auto',fontSize:12,color:'var(--text3)'}}>
+            {bank?.questions?.length || 0} in bank
+          </span>
         </div>
       </div>
     </Modal>

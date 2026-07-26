@@ -25,6 +25,10 @@ const NAV = [
   { type:'section', label:'Lifecycle' },
   { path:'/admin/promotion', label:'Promotion',          icon:<TrendingUp size={15}/> },
   { path:'/admin/detention', label:'Detention Control',  icon:<AlertTriangle size={15}/> },
+  { type:'section', label:'System' },
+  { path:'/admin/audit',     label:'Audit Log',          icon:<FileText size={15}/> },
+  { path:'/admin/backup',    label:'Backup',             icon:<Download size={15}/> },
+  { path:'/admin/announce',  label:'Announcements',      icon:<span style={{fontSize:13}}>📢</span> },
   { type:'section', label:'Reports' },
   { path:'/admin/consolidated',  label:'Consolidated CIE',  icon:<FileText size={15}/> },
   { path:'/admin/student-list',  label:'Student List',       icon:<GraduationCap size={15}/> },
@@ -51,6 +55,9 @@ export default function AdminDashboard() {
         <Route path="/mentoring"element={<MentoringPage/>}/>
         <Route path="/promotion"element={<PromotionPage/>}/>
         <Route path="/detention" element={<DetentionPage/>}/>
+        <Route path="/audit"     element={<AuditLogPage/>}/>
+        <Route path="/backup"    element={<BackupPage/>}/>
+        <Route path="/announce"  element={<AnnouncePage/>}/>
         <Route path="/ai"       element={<AIInsightsPage/>}/>
         <Route path="/consolidated"  element={<ConsolidatedCIEPage/>}/>
         <Route path="/student-list"  element={<StudentListPage/>}/>
@@ -1208,6 +1215,295 @@ function PromotionPage() {
 }
 
 /* ── SUPPLIES & STATUS ────────────────────────────────────────────────── */
+
+/* ── AUDIT LOG ───────────────────────────────────────────────────────── */
+function AuditLogPage() {
+  const [data,    setData]    = useState({ items:[], total:0, page:1, pages:1 });
+  const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({ category:'all', severity:'all', days:'30', search:'' });
+  const [page,    setPage]    = useState(1);
+
+  const load = async (p = page) => {
+    setLoading(true);
+    try {
+      const { data: d } = await api.get('/api/admin/audit', { params:{ ...filters, page:p, limit:50 } });
+      setData(d);
+    } catch { toast.error('Failed to load audit log'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { setPage(1); load(1); /* eslint-disable-next-line */ }, [filters]);
+
+  const CATS = [
+    { k:'all', l:'All' }, { k:'marks', l:'Marks' }, { k:'student', l:'Students' },
+    { k:'sliptest', l:'Slip Tests' }, { k:'elective', l:'Electives' },
+    { k:'teacher', l:'Teachers' }, { k:'system', l:'System' },
+  ];
+  const sevColor = { info:'var(--text2)', warning:'var(--amber)', critical:'var(--red)' };
+  const sevBg    = { info:'var(--surface2)', warning:'var(--amber-l)', critical:'var(--red-l)' };
+
+  const when = (d) => new Date(d).toLocaleString('en-IN',
+    { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+
+  return (
+    <div className="a-page">
+      <div className="a-page-header">
+        <div>
+          <h2 className="a-page-title">Audit Log</h2>
+          <p className="a-page-sub">Every consequential action — who did what, and when</p>
+        </div>
+      </div>
+
+      <div className="a-card">
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          {CATS.map(cat => (
+            <button key={cat.k}
+              className={`btn btn-sm ${filters.category===cat.k?'btn-brand':'btn-white'}`}
+              onClick={()=>setFilters(f=>({...f,category:cat.k}))}>{cat.l}</button>
+          ))}
+          <select className="input" style={{width:120,marginLeft:'auto'}}
+            value={filters.days} onChange={e=>setFilters(f=>({...f,days:e.target.value}))}>
+            <option value="1">Last 24h</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="365">Last year</option>
+            <option value="0">All time</option>
+          </select>
+          <input className="input" style={{maxWidth:220}} placeholder="Search…"
+            value={filters.search} onChange={e=>setFilters(f=>({...f,search:e.target.value}))}/>
+        </div>
+      </div>
+
+      {loading ? <div style={{textAlign:'center',padding:40}}><Spinner/></div>
+      : data.items.length === 0
+        ? <Empty icon="📋" msg="No activity recorded" sub="Actions will appear here as they happen"/>
+        : (
+          <>
+            <div className="a-card" style={{padding:0,overflow:'hidden'}}>
+              <div style={{overflowX:'auto'}}>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>When</th><th>Who</th><th>Action</th>
+                      <th>Target</th><th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.items.map(a => (
+                      <tr key={a._id}>
+                        <td style={{fontSize:11.5,color:'var(--text2)',whiteSpace:'nowrap'}}>{when(a.createdAt)}</td>
+                        <td>
+                          <div style={{fontSize:12.5,fontWeight:500}}>{a.actorName}</div>
+                          <span className="tag tag-gray" style={{fontSize:9}}>{a.actorRole}</span>
+                        </td>
+                        <td>
+                          <span style={{fontSize:10,fontWeight:700,padding:'2px 9px',borderRadius:20,
+                            color:sevColor[a.severity], background:sevBg[a.severity]}}>
+                            {a.action}
+                          </span>
+                        </td>
+                        <td style={{fontSize:12,color:'var(--text2)',maxWidth:180}}>{a.targetLabel || '—'}</td>
+                        <td style={{fontSize:12,color:'var(--text)',maxWidth:340}}>{a.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {data.pages > 1 && (
+              <div style={{display:'flex',gap:8,alignItems:'center',justifyContent:'center',marginTop:12}}>
+                <button className="btn btn-white btn-sm" disabled={page<=1}
+                  onClick={()=>{const p=page-1;setPage(p);load(p);}}>← Prev</button>
+                <span style={{fontSize:12,color:'var(--text2)'}}>Page {data.page} of {data.pages} · {data.total} entries</span>
+                <button className="btn btn-white btn-sm" disabled={page>=data.pages}
+                  onClick={()=>{const p=page+1;setPage(p);load(p);}}>Next →</button>
+              </div>
+            )}
+          </>
+        )
+      }
+    </div>
+  );
+}
+
+/* ── BACKUP ──────────────────────────────────────────────────────────── */
+function BackupPage() {
+  const [status,  setStatus]  = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy,    setBusy]    = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try { const { data } = await api.get('/api/admin/backup/status'); setStatus(data); }
+    catch { toast.error('Failed to load backup status'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const res = await api.get('/api/admin/backup/export', { responseType:'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+      a.href = url; a.download = `evalpro-backup-${stamp}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Backup downloaded');
+      load();
+    } catch(e) { toast.error(e.response?.data?.message || 'Backup failed'); }
+    finally { setBusy(false); }
+  };
+
+  if (loading) return <div style={{textAlign:'center',padding:60}}><Spinner/></div>;
+
+  const c = status?.counts || {};
+  const cards = [
+    { l:'Students',      v:c.students,          i:'🎓' },
+    { l:'Teachers',      v:c.teachers,          i:'👤' },
+    { l:'Subjects',      v:c.subjects,          i:'📚' },
+    { l:'Theory Marks',  v:c.theoryMarks,       i:'📊' },
+    { l:'Lab Marks',     v:c.labMarks,          i:'🔬' },
+    { l:'Mentoring',     v:c.mentoring,         i:'🤝' },
+    { l:'Slip Tests',    v:c.slipTests,         i:'🛡' },
+    { l:'Attempts',      v:c.slipTestAttempts,  i:'✍️' },
+    { l:'Assignments',   v:c.assignments,       i:'📝' },
+    { l:'Elective Choices', v:c.electiveChoices,i:'🗳' },
+  ];
+
+  return (
+    <div className="a-page">
+      <div className="a-page-header">
+        <div>
+          <h2 className="a-page-title">Backup</h2>
+          <p className="a-page-sub">Download a complete snapshot of your department's data</p>
+        </div>
+        <button className="btn btn-brand" onClick={download} disabled={busy}>
+          {busy ? <Spinner/> : <><Download size={14}/> Download Backup</>}
+        </button>
+      </div>
+
+      {status?.lastBackup ? (
+        <div className="alert alert-mint" style={{fontSize:12.5}}>
+          Last backup taken <strong>{new Date(status.lastBackup.at).toLocaleString('en-IN',
+            {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</strong> by {status.lastBackup.by}
+        </div>
+      ) : (
+        <div className="alert alert-amber" style={{fontSize:12.5}}>
+          <strong>No backup has been taken yet.</strong> Download one now, and make a habit of it
+          before every promotion run or bulk import.
+        </div>
+      )}
+
+      <div className="a-card">
+        <h3 style={{fontFamily:"'Outfit',sans-serif",fontWeight:700,fontSize:14,marginBottom:12}}>
+          What gets backed up
+        </h3>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
+          {cards.map(x => (
+            <div key={x.l} style={{padding:'12px',background:'var(--surface2)',
+              border:'1px solid var(--border)',borderRadius:'var(--r2)',textAlign:'center'}}>
+              <div style={{fontSize:18,marginBottom:4}}>{x.i}</div>
+              <div style={{fontFamily:"'Outfit',sans-serif",fontWeight:800,fontSize:20,color:'var(--brand)'}}>
+                {x.v ?? 0}
+              </div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{x.l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="a-card">
+        <h3 style={{fontFamily:"'Outfit',sans-serif",fontWeight:700,fontSize:14,marginBottom:8}}>
+          Recommended routine
+        </h3>
+        <ul style={{margin:0,paddingLeft:20,fontSize:13,color:'var(--text2)',lineHeight:2}}>
+          <li>Before every <strong>promotion run</strong> — it changes every student record</li>
+          <li>Before a <strong>bulk student import</strong></li>
+          <li>After <strong>CIE marks are finalised</strong> each semester</li>
+          <li>Before <strong>elective allotment</strong> is finalised</li>
+        </ul>
+        <div className="alert alert-blue" style={{fontSize:12,marginTop:12,marginBottom:0}}>
+          Passwords are never included in the export. Store the file somewhere private —
+          it contains student marks and personal details.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── ANNOUNCEMENTS ───────────────────────────────────────────────────── */
+function AnnouncePage() {
+  const { user } = useAuth();
+  const myPrograms = user?.programs?.length ? user.programs : ['B.Tech'];
+  const [form, setForm] = useState({ title:'', body:'', program:'', semester:'', section:'' });
+  const [busy, setBusy] = useState(false);
+
+  const send = async () => {
+    if (!form.title.trim()) { toast.error('Enter a title'); return; }
+    if (!window.confirm('Send this announcement to all matching students?')) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post('/api/admin/announce', form);
+      toast.success(data.message);
+      setForm({ title:'', body:'', program:'', semester:'', section:'' });
+    } catch(e) { toast.error(e.response?.data?.message || 'Failed'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="a-page">
+      <div className="a-page-header">
+        <div>
+          <h2 className="a-page-title">Announcements</h2>
+          <p className="a-page-sub">Send a notification to students — appears in their notification bell</p>
+        </div>
+      </div>
+
+      <div className="a-card" style={{maxWidth:640}}>
+        <div className="form-group">
+          <label className="lbl">Title *</label>
+          <input className="input" placeholder="CIE marks will be published on Friday"
+            value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))}/>
+        </div>
+        <div className="form-group">
+          <label className="lbl">Message</label>
+          <textarea className="input" rows={4} placeholder="Optional details…"
+            value={form.body} onChange={e=>setForm(f=>({...f,body:e.target.value}))}/>
+        </div>
+
+        <div style={{fontSize:12,fontWeight:700,color:'var(--text2)',margin:'8px 0 6px',
+          textTransform:'uppercase',letterSpacing:'.05em'}}>Send to</div>
+        <div className="g2">
+          <div className="form-group">
+            <label className="lbl">Program</label>
+            <select className="input" value={form.program} onChange={e=>setForm(f=>({...f,program:e.target.value}))}>
+              <option value="">All programs</option>
+              {myPrograms.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="lbl">Semester</label>
+            <select className="input" value={form.semester} onChange={e=>setForm(f=>({...f,semester:e.target.value}))}>
+              <option value="">All semesters</option>
+              {[1,2,3,4,5,6,7,8].map(n=><option key={n} value={n}>Semester {n}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="lbl">Section</label>
+            <input className="input" placeholder="All sections"
+              value={form.section} onChange={e=>setForm(f=>({...f,section:e.target.value}))}/>
+          </div>
+        </div>
+
+        <button className="btn btn-brand" onClick={send} disabled={busy || !form.title.trim()}>
+          {busy ? <Spinner/> : '📢 Send Announcement'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DetentionPage() {
   const [students, setStudents] = useState([]);
   const [loading,  setLoading]  = useState(true);

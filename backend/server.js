@@ -20,6 +20,8 @@ app.use('/api/teacher',     require('./routes/teacher'));
 app.use('/api/sliptests',    require('./routes/sliptests'));
 app.use('/api/electives',    require('./routes/electives'));
 app.use('/api/student',     require('./routes/student'));
+app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/questionbank',  require('./routes/questionbank'));
 app.use('/api',             require('./routes/assignments'));
 
 app.get('/', (req, res) => res.json({ message: 'EvalPro v2 API ✓' }));

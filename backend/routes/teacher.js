@@ -7,6 +7,7 @@ const TheoryMarks = require('../models/TheoryMarks');
 const LabMarks    = require('../models/LabMarks');
 const MentoringRecord = require('../models/MentoringRecord');
 const MentorTask      = require('../models/MentorTask');
+const { logAudit, notify, toStudents } = require('../utils/audit');
 
 const auth = [protect, teacherOnly];
 
@@ -580,8 +581,28 @@ router.post('/marks/submit', auth, async (req, res) => {
     await TheoryMarks.updateMany({ subject: subjectId, status: 'approved' }, { $set: { status: 'submitted' } });
     await LabMarks.updateMany(   { subject: subjectId, status: 'approved' }, { $set: { status: 'submitted' } });
     // Publish all drafts for current academic year
-    await TheoryMarks.updateMany({ subject: subjectId, status: 'draft', academicYear: pubYear }, { $set: { status: 'submitted' } });
-    await LabMarks.updateMany(   { subject: subjectId, status: 'draft', academicYear: pubYear }, { $set: { status: 'submitted' } });
+    const tRes = await TheoryMarks.updateMany({ subject: subjectId, status: 'draft', academicYear: pubYear }, { $set: { status: 'submitted' } });
+    const lRes = await LabMarks.updateMany(   { subject: subjectId, status: 'draft', academicYear: pubYear }, { $set: { status: 'submitted' } });
+
+    // Notify every student who now has visible marks for this subject
+    const published = await TheoryMarks.find({ subject: subjectId, status: 'submitted', academicYear: pubYear }).select('student').lean();
+    const publishedLab = await LabMarks.find({ subject: subjectId, status: 'submitted', academicYear: pubYear }).select('student').lean();
+    const ids = [...published, ...publishedLab].map(m => m.student);
+    const sent = await notify(toStudents(ids), {
+      type: 'marks_published',
+      title: `${subject.name} CIE marks published`,
+      body:  `Your ${subject.code} marks are now available to view.`,
+      link:  '/student/marks', icon: '📊',
+    });
+
+    await logAudit(req, {
+      action: 'marks.publish', category: 'marks', severity: 'warning',
+      targetType: 'Subject', targetId: subject._id,
+      targetLabel: `${subject.name} (${subject.code})`,
+      description: `Published CIE marks — ${tRes.modifiedCount} theory, ${lRes.modifiedCount} lab record(s); notified ${sent} student(s)`,
+      academicYear: pubYear,
+    });
+
     res.json({ message: 'Marks published — students can now see their CIE marks' });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });

@@ -11,6 +11,17 @@ const MentoringRecord = require('../models/MentoringRecord');
 const TheoryMarks = require('../models/TheoryMarks');
 const MentorTask  = require('../models/MentorTask');
 const LabMarks    = require('../models/LabMarks');
+const AuditLog    = require('../models/AuditLog');
+const Notification= require('../models/Notification');
+const Assignment  = require('../models/Assignment');
+const Submission  = require('../models/Submission');
+const SlipTest    = require('../models/SlipTest');
+const SlipTestAttempt = require('../models/SlipTestAttempt');
+const ElectiveGroup   = require('../models/ElectiveGroup');
+const ElectiveChoice  = require('../models/ElectiveChoice');
+const ExamConfig  = require('../models/ExamConfig');
+const QuestionBank= require('../models/QuestionBank');
+const { logAudit, notify, toStudents } = require('../utils/audit');
 
 const upload = multer({ storage: multer.memoryStorage() });
 const auth = [protect, adminOnly];
@@ -467,6 +478,168 @@ router.get('/promotion/preview', auth, async (req, res) => {
 
 // ── PROMOTION: execute ──────────────────────────────────────────────────────
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// AUDIT LOG
+// ═══════════════════════════════════════════════════════════════════════
+router.get('/audit', auth, async (req, res) => {
+  try {
+    const { department } = scopeOf(req);
+    const { category, severity, search, targetId, days = 30 } = req.query;
+    const page  = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+    const q = { department };
+    if (category && category !== 'all') q.category = category;
+    if (severity && severity !== 'all') q.severity = severity;
+    if (targetId) q.targetId = targetId;
+    if (days && Number(days) > 0)
+      q.createdAt = { $gte: new Date(Date.now() - Number(days) * 86400000) };
+    if (search) {
+      const rx = new RegExp(String(search).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'i');
+      q.$or = [{ description: rx }, { actorName: rx }, { targetLabel: rx }, { action: rx }];
+    }
+
+    const [items, total] = await Promise.all([
+      AuditLog.find(q).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).lean(),
+      AuditLog.countDocuments(q),
+    ]);
+    res.json({ items, total, page, pages: Math.ceil(total/limit) });
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// Audit trail for one specific student — for mark disputes
+router.get('/audit/student/:id', auth, async (req, res) => {
+  try {
+    const items = await AuditLog.find({ targetId: req.params.id })
+      .sort({ createdAt: -1 }).limit(100).lean();
+    res.json(items);
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// BACKUP
+// ═══════════════════════════════════════════════════════════════════════
+// Full department snapshot as JSON. Passwords are stripped.
+router.get('/backup/export', auth, async (req, res) => {
+  try {
+    const { department } = scopeOf(req);
+    const year = getConfig().academicYear;
+
+    const teachers = await Teacher.find({ department }).select('-password').lean();
+    const students = await Student.find({ branch: department }).select('-password').lean();
+    const subjects = await Subject.find({ department }).lean();
+    const sIds = students.map(s => s._id);
+    const subIds = subjects.map(s => s._id);
+
+    const [theory, lab, mentoring, mentorTasks, examConfigs,
+           assignments, submissions, slipTests, slipAttempts,
+           electiveGroups, electiveChoices, banks] = await Promise.all([
+      TheoryMarks.find({ student: { $in: sIds } }).lean(),
+      LabMarks.find({ student: { $in: sIds } }).lean(),
+      MentoringRecord.find({ student: { $in: sIds } }).lean(),
+      MentorTask.find({ department }).lean(),
+      ExamConfig.find({ subject: { $in: subIds } }).lean(),
+      Assignment.find({ subject: { $in: subIds } }).lean(),
+      Submission.find({ student: { $in: sIds } }).lean(),
+      SlipTest.find({ subject: { $in: subIds } }).lean(),
+      SlipTestAttempt.find({ student: { $in: sIds } }).lean(),
+      ElectiveGroup.find({ department }).lean(),
+      ElectiveChoice.find({ student: { $in: sIds } }).lean(),
+      QuestionBank.find({ subject: { $in: subIds } }).lean(),
+    ]);
+
+    const payload = {
+      meta: {
+        version: 2, department, academicYear: year,
+        exportedAt: new Date().toISOString(),
+        exportedBy: req.user.name,
+        counts: {
+          teachers: teachers.length, students: students.length, subjects: subjects.length,
+          theoryMarks: theory.length, labMarks: lab.length, mentoring: mentoring.length,
+          assignments: assignments.length, submissions: submissions.length,
+          slipTests: slipTests.length, slipTestAttempts: slipAttempts.length,
+          electiveGroups: electiveGroups.length, electiveChoices: electiveChoices.length,
+        }
+      },
+      teachers, students, subjects, theoryMarks: theory, labMarks: lab,
+      mentoringRecords: mentoring, mentorTasks, examConfigs,
+      assignments, submissions, slipTests, slipTestAttempts: slipAttempts,
+      electiveGroups, electiveChoices, questionBanks: banks,
+    };
+
+    await logAudit(req, {
+      action: 'backup.export', category: 'system', severity: 'info',
+      description: `Exported full backup — ${students.length} students, ${theory.length + lab.length} mark records`,
+      academicYear: year,
+    });
+
+    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    res.setHeader('Content-Type','application/json');
+    res.setHeader('Content-Disposition',`attachment; filename="evalpro-backup-${department}-${stamp}.json"`);
+    res.send(JSON.stringify(payload, null, 2));
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// What a backup would contain right now — shown before download
+router.get('/backup/status', auth, async (req, res) => {
+  try {
+    const { department } = scopeOf(req);
+    const students = await Student.find({ branch: department }).select('_id').lean();
+    const subjects = await Subject.find({ department }).select('_id').lean();
+    const sIds = students.map(s => s._id), subIds = subjects.map(s => s._id);
+
+    const [teachers, theory, lab, mentoring, slipTests, attempts, electives, assignments] = await Promise.all([
+      Teacher.countDocuments({ department }),
+      TheoryMarks.countDocuments({ student: { $in: sIds } }),
+      LabMarks.countDocuments({ student: { $in: sIds } }),
+      MentoringRecord.countDocuments({ student: { $in: sIds } }),
+      SlipTest.countDocuments({ subject: { $in: subIds } }),
+      SlipTestAttempt.countDocuments({ student: { $in: sIds } }),
+      ElectiveChoice.countDocuments({ student: { $in: sIds } }),
+      Assignment.countDocuments({ subject: { $in: subIds } }),
+    ]);
+
+    const last = await AuditLog.findOne({ department, action: 'backup.export' })
+      .sort({ createdAt: -1 }).select('createdAt actorName').lean();
+
+    res.json({
+      counts: { teachers, students: students.length, subjects: subjects.length,
+                theoryMarks: theory, labMarks: lab, mentoring,
+                slipTests, slipTestAttempts: attempts, electiveChoices: electives, assignments },
+      lastBackup: last ? { at: last.createdAt, by: last.actorName } : null,
+    });
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// ANNOUNCEMENTS — push a notification to students
+// ═══════════════════════════════════════════════════════════════════════
+router.post('/announce', auth, async (req, res) => {
+  try {
+    const { department } = scopeOf(req);
+    const { title, body, program, semester, section } = req.body;
+    if (!title?.trim()) return res.status(400).json({ message: 'Title is required' });
+
+    const q = { branch: department, status: { $ne: 'Graduated' } };
+    if (program)  q.program  = program;
+    if (semester) q.semester = Number(semester);
+    if (section)  q.section  = String(section);
+
+    const students = await Student.find(q).select('_id').lean();
+    const sent = await notify(toStudents(students.map(s => s._id)), {
+      type: 'announcement', title: title.trim(), body: body || '',
+      link: '/student', icon: '📢'
+    });
+
+    await logAudit(req, {
+      action: 'announcement.send', category: 'system',
+      description: `Sent announcement "${title}" to ${sent} student(s)`,
+    });
+    res.json({ message: `Announcement sent to ${sent} student(s)`, sent });
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
 // ── DETENTION CONTROL ─────────────────────────────────────────────────────
 // Admin decides detention (e.g. credit shortage, attendance shortage).
 // A detained student keeps read access to their marks but loses the right to
@@ -480,10 +653,26 @@ router.post('/students/:id/detain', auth, async (req, res) => {
     if (s.branch !== department) return res.status(403).json({ message: 'Not your department' });
     if (s.status === 'Graduated') return res.status(400).json({ message: 'Cannot detain a graduated student' });
 
+    const before = { status: s.status };
     s.status = 'Detained';
     s.detentionReason = reason;
     s.detainedOn = new Date();
     await s.save();
+
+    await notify([{ id: s._id, model: 'Student' }], {
+      type: 'detention_applied',
+      title: 'Your account has been placed under detention',
+      body:  reason ? `Reason: ${reason}. Assignments, slip tests and elective registration are locked. Please contact your mentor.`
+                    : 'Assignments, slip tests and elective registration are locked. Please contact your mentor.',
+      link:  '/student', icon: '⚠️',
+    });
+    await logAudit(req, {
+      action: 'student.detain', category: 'student', severity: 'critical',
+      targetType: 'Student', targetId: s._id, targetLabel: `${s.name} (${s.usn})`,
+      description: `Detained${reason ? ' — ' + reason : ''}`,
+      before, after: { status: 'Detained', detentionReason: reason },
+      academicYear: getConfig().academicYear,
+    });
     res.json({ message: `${s.name} detained${reason ? ' — ' + reason : ''}. Assignments, slip tests and elective registration are now locked for them.`, student: s });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
@@ -535,13 +724,32 @@ router.post('/students/:id/reassign', auth, async (req, res) => {
         { $unset: { mentor: 1 } }
       );
     }
-    if (lift && s.status === 'Detained') {
+    const wasDetained = s.status === 'Detained';
+    if (lift && wasDetained) {
       changes.push('detention lifted — full access restored');
       s.status = 'Active';
       s.detentionReason = '';
       s.detainedOn = null;
     }
     await s.save();
+
+    if (changes.length) {
+      if (lift && wasDetained) {
+        await notify([{ id: s._id, model: 'Student' }], {
+          type: 'detention_lifted',
+          title: 'Your detention has been lifted',
+          body:  `You are now in Semester ${s.semester}, Section ${s.section}. Assignments, slip tests and elective registration are available again.`,
+          link:  '/student', icon: '✅',
+        });
+      }
+      await logAudit(req, {
+        action: lift && wasDetained ? 'student.detention_lift' : 'student.reassign',
+        category: 'student', severity: 'critical',
+        targetType: 'Student', targetId: s._id, targetLabel: `${s.name} (${s.usn})`,
+        description: changes.join(', '),
+        academicYear: getConfig().academicYear,
+      });
+    }
     res.json({
       message: changes.length
         ? `${s.name}: ${changes.join(', ')}. Run Assign Mentors for the new batch to link their mentor.`
@@ -582,6 +790,29 @@ router.post('/promotion/execute', auth, async (req, res) => {
       }
       await s.save();
     }
+    // Notify promoted students
+    try {
+      const movedIds = students
+        .filter(s => !holdIds.includes(s._id.toString()) && s.status === 'Active')
+        .map(s => s._id);
+      if (promoted > 0) {
+        await notify(toStudents(movedIds), {
+          type: 'promotion',
+          title: `Promoted to Semester ${Number(semester) + 1}`,
+          body:  'Your semester has been updated. Check your subjects and mentor details.',
+          link:  '/student', icon: '🎓',
+        });
+      }
+    } catch {}
+
+    await logAudit(req, {
+      action: 'promotion.execute', category: 'student', severity: 'critical',
+      targetType: 'Batch', targetLabel: `${program} Sem ${semester}${section ? ' Sec ' + section : ''}`,
+      description: `Promotion run — ${promoted} promoted, ${graduated} graduated, ${held} held back`,
+      after: { promoted, graduated, held },
+      academicYear: getConfig().academicYear,
+    });
+
     res.json({ promoted, graduated, pending, held });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });

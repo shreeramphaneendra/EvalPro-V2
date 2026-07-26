@@ -4,6 +4,7 @@ const ElectiveGroup = require('../models/ElectiveGroup');
 const ElectiveChoice= require('../models/ElectiveChoice');
 const Student       = require('../models/Student');
 const Teacher       = require('../models/Teacher');
+const { logAudit, notify, toStudents } = require('../utils/audit');
 
 const adminAuth   = [protect, adminOnly];
 const studentAuth = [protect, studentOnly];
@@ -112,7 +113,27 @@ router.post('/admin/groups/:id/open', adminAuth, async (req, res) => {
     if (!group) return res.status(404).json({ message: 'Not found' });
     group.status = 'open';
     await group.save();
-    res.json({ message: 'Registration opened — students can now submit preferences' });
+
+    const esc = s => String(s||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const students = await Student.find({
+      branch:   { $regex: `^${esc(group.department)}$`, $options: 'i' },
+      program:  { $regex: `^${esc(group.program)}$`,    $options: 'i' },
+      semester: group.currentSemester,
+      status:   'Active',
+    }).select('_id').lean();
+    const sent = await notify(toStudents(students.map(s => s._id)), {
+      type: 'elective_open',
+      title: `${group.slotLabel} registration is open`,
+      body:  `Submit your 1st, 2nd and 3rd preferences before ${new Date(group.registrationClose).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}.`,
+      link:  '/student/electives', icon: '📚',
+    });
+    await logAudit(req, {
+      action: 'elective.open', category: 'elective', severity: 'warning',
+      targetType: 'ElectiveGroup', targetId: group._id, targetLabel: group.slotLabel,
+      description: `Opened registration for ${group.slotLabel} (Sem ${group.currentSemester} → ${group.targetSemester}) — notified ${sent} student(s)`,
+      academicYear: group.academicYear,
+    });
+    res.json({ message: `Registration opened — ${sent} student(s) notified` });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
 
@@ -331,7 +352,27 @@ router.post('/admin/groups/:id/allot', adminAuth, async (req, res) => {
     group.resultDeclared = true;
     await group.save();
 
-    res.json({ message: 'Allotments finalized — students can see their results' });
+    const allChoices = await ElectiveChoice.find({ electiveGroup: group._id })
+      .select('student status allottedSubjectName').lean();
+    let sent = 0;
+    for (const ch of allChoices) {
+      sent += await notify([{ id: ch.student, model: 'Student' }], {
+        type: 'elective_result',
+        title: `${group.slotLabel} allotment declared`,
+        body:  ch.status === 'confirmed'
+          ? `You have been allotted: ${ch.allottedSubjectName}`
+          : 'Your preference could not be accommodated — please contact the department.',
+        link:  '/student/electives',
+        icon:  ch.status === 'confirmed' ? '✅' : '⚠️',
+      });
+    }
+    await logAudit(req, {
+      action: 'elective.allot', category: 'elective', severity: 'critical',
+      targetType: 'ElectiveGroup', targetId: group._id, targetLabel: group.slotLabel,
+      description: `Finalized allotments for ${group.slotLabel} — ${allChoices.length} choice(s) processed, ${sent} notified`,
+      academicYear: group.academicYear,
+    });
+    res.json({ message: `Allotments finalized — ${sent} student(s) notified` });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
 
