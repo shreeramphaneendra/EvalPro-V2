@@ -1,5 +1,5 @@
 const router        = require('express').Router();
-const { protect, adminOnly, teacherOnly, studentOnly } = require('../middleware/auth');
+const { protect, adminOnly, teacherOnly, studentOnly, activeStudentOnly } = require('../middleware/auth');
 const ElectiveGroup = require('../models/ElectiveGroup');
 const ElectiveChoice= require('../models/ElectiveChoice');
 const Student       = require('../models/Student');
@@ -404,7 +404,7 @@ router.get('/student/available', studentAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
 
-router.post('/student/submit', studentAuth, async (req, res) => {
+router.post('/student/submit', [protect, activeStudentOnly], async (req, res) => {
   try {
     const { groupId, pref1, pref2, pref3 } = req.body;
     if (!pref1) return res.status(400).json({ message: '1st preference is required' });

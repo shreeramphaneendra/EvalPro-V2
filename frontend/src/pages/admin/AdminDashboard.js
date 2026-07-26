@@ -24,7 +24,7 @@ const NAV = [
   { path:'/admin/mentoring', label:'Mentoring',          icon:<UserCheck size={15}/> },
   { type:'section', label:'Lifecycle' },
   { path:'/admin/promotion', label:'Promotion',          icon:<TrendingUp size={15}/> },
-  { path:'/admin/supplies',  label:'Supplies & Status',  icon:<AlertTriangle size={15}/> },
+  { path:'/admin/detention', label:'Detention Control',  icon:<AlertTriangle size={15}/> },
   { type:'section', label:'Reports' },
   { path:'/admin/consolidated',  label:'Consolidated CIE',  icon:<FileText size={15}/> },
   { path:'/admin/student-list',  label:'Student List',       icon:<GraduationCap size={15}/> },
@@ -50,7 +50,7 @@ export default function AdminDashboard() {
         <Route path="/subjects" element={<SubjectsPage/>}/>
         <Route path="/mentoring"element={<MentoringPage/>}/>
         <Route path="/promotion"element={<PromotionPage/>}/>
-        <Route path="/supplies" element={<SuppliesPage/>}/>
+        <Route path="/detention" element={<DetentionPage/>}/>
         <Route path="/ai"       element={<AIInsightsPage/>}/>
         <Route path="/consolidated"  element={<ConsolidatedCIEPage/>}/>
         <Route path="/student-list"  element={<StudentListPage/>}/>
@@ -202,7 +202,7 @@ function Overview() {
             </table>
           </div>
           {data.atRisk.length > 12 && (
-            <p className="a-table-more">+{data.atRisk.length-12} more · check Supplies & Status page</p>
+            <p className="a-table-more">+{data.atRisk.length-12} more · check Detention Control page</p>
           )}
         </div>
       )}
@@ -248,14 +248,13 @@ function AdminOverview() {
   if (loading) return <AdminLoader/>;
 
   const detained = students.filter(s => s.status === 'Detained').length;
-  const supplies = students.filter(s => (s.supplies||[]).some(x=>!x.cleared)).length;
   const activeStudents = students.filter(s => s.status === 'Active').length;
 
   const statCards = [
     { val:students.length, lbl:'Total Students', sub:`${activeStudents} active`,  color:'var(--brand)',  bg:'var(--brand-l)',  icon:'🎓', path:'/admin/students' },
     { val:teachers.length, lbl:'Teachers',        sub:'faculty',                  color:'var(--blue)',   bg:'var(--blue-l)',   icon:'📚', path:'/admin/teachers' },
     { val:subjects.length, lbl:'Subjects',         sub:'configured',               color:'var(--violet)', bg:'var(--violet-l)', icon:'📋', path:'/admin/subjects' },
-    { val:detained,        lbl:'Detained',          sub:'attendance <70%',          color:'var(--red)',    bg:'var(--red-l)',    icon:'⚠️', path:'/admin/supplies' },
+    { val:detained,        lbl:'Detained',          sub:'attendance <70%',          color:'var(--red)',    bg:'var(--red-l)',    icon:'⚠️', path:'/admin/detention' },
   ];
 
   return (
@@ -293,7 +292,6 @@ function AdminOverview() {
               { lbl:'Active',            val:activeStudents,                     color:'var(--mint)' },
               { lbl:'Detained',          val:detained,                           color:'var(--red)'  },
               { lbl:'Pending Clearance', val:students.filter(s=>s.status==='PendingClearance').length, color:'var(--amber)' },
-              { lbl:'With Supplies',     val:supplies,                           color:'var(--brand)'},
             ].map(s => (
               <div key={s.lbl} className="a-status-row">
                 <span className="a-status-row__lbl">{s.lbl}</span>
@@ -473,6 +471,7 @@ function TeachersPage() {
 /* ── STUDENTS PAGE ────────────────────────────────────────────────────── */
 function StudentsPage() {
   const { user } = useAuth();
+  const nav = useNavigate();
   const myPrograms = user?.programs?.length ? user.programs : ['B.Tech'];
   const [students, setStudents] = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -525,17 +524,11 @@ function StudentsPage() {
     try{ await api.post(`/api/admin/students/${s._id}/reset-password`); toast.success(`Password reset to ${s.usn}`); }
     catch(err){ toast.error(err.response?.data?.message||'Failed'); }
   };
-  const reassign = async s => {
-    const section = window.prompt(`Reassign ${s.name} to the junior batch.\n\nNew section (current: ${s.section}):`, s.section);
-    if (section === null) return;
-    const batch = window.prompt(`New mentoring batch (current: ${s.mentoringBatch||'—'}), e.g. M1:`, s.mentoringBatch||'M1');
-    if (batch === null) return;
-    const reactivate = s.status==='Detained' ? window.confirm('Reactivate the student (Detained → Active) so they can take tests and register electives with the new batch?') : false;
-    try{
-      const { data } = await api.post(`/api/admin/students/${s._id}/reassign`, { section, mentoringBatch: batch, reactivate });
-      toast.success(data.message); load();
-    } catch(err){ toast.error(err.response?.data?.message||'Failed'); }
+  const reassign = () => {
+    toast('Open Detention Control to lift detention and choose the semester', { icon: '↪' });
+    nav('/admin/detention');
   };
+
 
   return (
     <div className="a-page">
@@ -593,7 +586,7 @@ function StudentsPage() {
                     <td className="center">
                       <div className="a-actions">
                         <button className="a-action-btn" title={`Reset to ${s.usn}`} onClick={()=>resetPw(s)}><KeyRound size={13}/></button>
-                        {s.status==='Detained' && <button className="a-action-btn" title="Reassign to junior batch" style={{color:'var(--brand)'}} onClick={()=>reassign(s)}>↪</button>}
+                        {s.status==='Detained' && <button className="a-action-btn" title="Manage detention — lift & place" style={{color:'var(--brand)'}} onClick={()=>reassign(s)}>↪</button>}
                         <button className="a-action-btn a-action-btn--danger" onClick={()=>del(s._id)}><Trash2 size={13}/></button>
                       </div>
                     </td>
@@ -1215,137 +1208,213 @@ function PromotionPage() {
 }
 
 /* ── SUPPLIES & STATUS ────────────────────────────────────────────────── */
-function SuppliesPage() {
+function DetentionPage() {
   const [students, setStudents] = useState([]);
-  const [subjects, setSubjects] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [filter, setFilter]     = useState('all');
-  const [search, setSearch]     = useState('');
-  const [supplyModal, setSupplyModal] = useState(null);
-  const [clearSubjectId, setClearSubjectId] = useState('');
+  const [loading,  setLoading]  = useState(true);
+  const [filter,   setFilter]   = useState('detained');
+  const [search,   setSearch]   = useState('');
+  const [modal,    setModal]    = useState(null);   // { mode:'detain'|'place', student }
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    Promise.all([api.get('/api/admin/students'),api.get('/api/admin/subjects')])
-      .then(([s,sub])=>{ setStudents(s.data); setSubjects(sub.data); })
-      .finally(()=>setLoading(false));
+    try { const { data } = await api.get('/api/admin/students'); setStudents(data); }
+    catch { toast.error('Failed to load students'); }
+    finally { setLoading(false); }
   };
-  useEffect(load,[]);
+  useEffect(() => { load(); }, []);
 
-  const setStatus = async (id,status) => {
-    try { await api.put(`/api/admin/students/${id}/status`,{status}); toast.success(`Status → ${status}`); load(); }
-    catch(err){ toast.error(err.response?.data?.message||'Failed'); }
-  };
-  const addSupply = async () => {
-    if(!clearSubjectId){ toast.error('Select a subject'); return; }
-    const sub = subjects.find(s=>s._id===clearSubjectId);
-    if(!sub) return;
-    try {
-      await api.post(`/api/admin/students/${supplyModal._id}/supplies`,{subjectId:clearSubjectId,subjectName:sub.name,subjectCode:sub.code,semester:sub.semester});
-      toast.success('Supply added'); setSupplyModal(null); setClearSubjectId(''); load();
-    } catch(err){ toast.error(err.response?.data?.message||'Failed'); }
-  };
-  const clearSupply = async (studentId,supplyId) => {
-    try { await api.put(`/api/admin/students/${studentId}/supplies/${supplyId}/clear`); toast.success('Supply cleared'); load(); }
-    catch(err){ toast.error(err.response?.data?.message||'Failed'); }
-  };
-  const removeSupply = async (studentId,supplyId) => {
-    if(!window.confirm('Remove this supply entry?')) return;
-    try { await api.delete(`/api/admin/students/${studentId}/supplies/${supplyId}`); toast.success('Removed'); load(); }
-    catch(err){ toast.error(err.response?.data?.message||'Failed'); }
+  const counts = {
+    detained: students.filter(s => s.status === 'Detained').length,
+    active:   students.filter(s => s.status === 'Active').length,
+    all:      students.length,
   };
 
-  const filterFns = {
-    all:             ()=>true,
-    Detained:        s=>s.status==='Detained',
-    PendingClearance:s=>s.status==='PendingClearance',
-    hasSupply:       s=>(s.supplies||[]).some(x=>!x.cleared),
-  };
-  const filtered = students.filter(filterFns[filter]||filterFns.all)
-    .filter(s=>!search||s.name.toLowerCase().includes(search.toLowerCase())||s.usn.toLowerCase().includes(search.toLowerCase()));
+  const shown = students
+    .filter(s => filter === 'all' ? true : filter === 'detained' ? s.status === 'Detained' : s.status === 'Active')
+    .filter(s => !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.usn.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="a-page">
       <div className="a-page-header">
         <div>
-          <h2 className="a-page-title">Supplies & Status</h2>
-          <p className="a-page-sub">Manage student detention, supply subjects, and lifecycle status</p>
+          <h2 className="a-page-title">Detention Control</h2>
+          <p className="a-page-sub">Detain students who fall short on credits or attendance, and decide exactly which year they re-join</p>
         </div>
       </div>
 
-      <div className="a-filters">
-        <div className="a-search">
-          <Search size={13} className="a-search__icon"/>
-          <input className="a-search__input" placeholder="Search name or USN…" value={search} onChange={e=>setSearch(e.target.value)}/>
-        </div>
-        <div className="tabs" style={{border:'none',gap:4}}>
-          {[['all','All'],['Detained','Detained'],['PendingClearance','Pending Clearance'],['hasSupply','Has Supplies']].map(([k,l])=>(
-            <button key={k} className={`tab-btn${filter===k?' active':''}`} onClick={()=>setFilter(k)}>{l}</button>
+      <div className="alert alert-amber" style={{fontSize:12.5}}>
+        A detained student can still <strong>view</strong> their marks and mentor, but cannot submit assignments,
+        attempt slip tests, or register for electives. All rights return the moment you lift the detention below.
+      </div>
+
+      <div className="a-card">
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+          {[
+            { key:'detained', label:`Detained (${counts.detained})`, color:'var(--red)' },
+            { key:'active',   label:`Active (${counts.active})`,     color:'var(--mint)' },
+            { key:'all',      label:`All (${counts.all})`,           color:'var(--text2)' },
+          ].map(t => (
+            <button key={t.key}
+              className={`btn btn-sm ${filter===t.key?'btn-brand':'btn-white'}`}
+              onClick={()=>setFilter(t.key)}>{t.label}</button>
           ))}
+          <input className="input" style={{maxWidth:240,marginLeft:'auto'}}
+            placeholder="Search name or roll no…" value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
       </div>
 
-      <div className="a-card a-card--table">
-        {loading ? <AdminLoader inline/> : filtered.length===0 ? <Empty icon="✅" msg="No students match this filter"/> : (
-          <div className="a-table-wrap">
-            <table className="tbl">
-              <thead><tr>
-                <th>Name</th><th>USN</th><th className="center">Sem</th>
-                <th className="center">Status</th><th>Supplies</th><th className="center">Actions</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map(s=>(
-                  <tr key={s._id}>
-                    <td style={{fontWeight:500}}>{s.name}</td>
-                    <td><span className="mono" style={{fontSize:11}}>{s.usn}</span></td>
-                    <td className="center"><span className="tag tag-orange" style={{fontSize:10}}>{s.semester}</span></td>
-                    <td className="center">
-                      <select className="input" style={{width:150,fontSize:11.5,padding:'3px 8px'}}
-                        value={s.status} onChange={e=>setStatus(s._id,e.target.value)}>
-                        <option value="Active">Active</option>
-                        <option value="Detained">Detained</option>
-                        <option value="PendingClearance">Pending Clearance</option>
-                        <option value="Graduated">Graduated</option>
-                      </select>
-                    </td>
-                    <td>
-                      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                        {(s.supplies||[]).map(sup=>(
-                          <div key={sup._id} className={`a-supply-chip${sup.cleared?' a-supply-chip--cleared':''}`}>
-                            <span>{sup.subjectCode||sup.subjectName}</span>
-                            {!sup.cleared && <button className="a-supply-chip__clear" onClick={()=>clearSupply(s._id,sup._id)} title="Mark cleared">✓</button>}
-                            <button className="a-supply-chip__remove" onClick={()=>removeSupply(s._id,sup._id)} title="Remove">×</button>
-                          </div>
-                        ))}
-                        <button className="a-supply-add" onClick={()=>setSupplyModal(s)}>+ Add Supply</button>
-                      </div>
-                    </td>
-                    <td className="center">
-                      <span style={{fontSize:11,color:'var(--text3)'}}>{s.section}</span>
-                    </td>
+      {loading ? <div style={{textAlign:'center',padding:40}}><Spinner/></div>
+      : shown.length === 0
+        ? <Empty icon="✅" msg={filter==='detained'?'No detained students':'No students match'} sub={filter==='detained'?'Everyone has full access right now':'Try a different filter'}/>
+        : (
+          <div className="a-card" style={{padding:0,overflow:'hidden'}}>
+            <div style={{overflowX:'auto'}}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>#</th><th>Roll No</th><th>Name</th>
+                    <th className="center">Sem</th><th className="center">Sec</th>
+                    <th className="center">Status</th><th>Reason</th><th className="center">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {shown.map((s,i)=>(
+                    <tr key={s._id} style={s.status==='Detained'?{background:'#FFF7F5'}:{}}>
+                      <td style={{color:'var(--text3)',fontSize:11}}>{i+1}</td>
+                      <td><span className="mono" style={{fontSize:11.5}}>{s.usn}</span></td>
+                      <td style={{fontWeight:500,fontSize:13}}>{s.name}</td>
+                      <td className="center">{s.semester}</td>
+                      <td className="center"><span className="tag tag-blue" style={{fontSize:10}}>{s.section}</span></td>
+                      <td className="center">
+                        <span className={`tag ${s.status==='Detained'?'tag-red':s.status==='Graduated'?'tag-gray':'tag-mint'}`} style={{fontSize:10}}>
+                          {s.status}
+                        </span>
+                      </td>
+                      <td style={{fontSize:11.5,color:'var(--text2)',maxWidth:200}}>{s.detentionReason || '—'}</td>
+                      <td className="center">
+                        {s.status === 'Detained'
+                          ? <button className="btn btn-mint btn-xs" onClick={()=>setModal({mode:'place',student:s})}>Lift &amp; Place</button>
+                          : s.status === 'Graduated'
+                            ? <span style={{color:'var(--text4)',fontSize:11}}>—</span>
+                            : <button className="btn btn-white btn-xs" onClick={()=>setModal({mode:'detain',student:s})}>Detain</button>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        )}
-      </div>
+        )
+      }
 
-      <Modal open={!!supplyModal} onClose={()=>setSupplyModal(null)} title={`Add Supply — ${supplyModal?.name||''}`}>
-        <div className="a-form">
-          <AField label="Subject *">
-            <select className="input" value={clearSubjectId} onChange={e=>setClearSubjectId(e.target.value)}>
-              <option value="">— Select subject —</option>
-              {subjects.map(s=><option key={s._id} value={s._id}>{s.name} ({s.code}) · Sem {s.semester}</option>)}
-            </select>
-          </AField>
-          <div className="a-form-actions">
-            <button className="btn btn-brand" onClick={addSupply}><Plus size={13}/> Add Supply</button>
-            <button className="btn btn-ghost" onClick={()=>setSupplyModal(null)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      {modal && <DetentionModal {...modal} onClose={()=>setModal(null)} onDone={()=>{setModal(null);load();}}/>}
     </div>
+  );
+}
+
+function DetentionModal({ mode, student, onClose, onDone }) {
+  const isDetain = mode === 'detain';
+  const [reason,   setReason]   = useState('');
+  const [form,     setForm]     = useState({
+    semester: String(student.semester),
+    section:  student.section || '',
+    mentoringBatch: student.mentoringBatch || '',
+    labBatch: student.labBatch || 'B1',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const REASONS = ['Credit shortage', 'Attendance shortage (<70%)', 'Failed to clear backlogs', 'Other'];
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      if (isDetain) {
+        const { data } = await api.post(`/api/admin/students/${student._id}/detain`, { reason });
+        toast.success(data.message);
+      } else {
+        const { data } = await api.post(`/api/admin/students/${student._id}/reassign`, { ...form, lift: true });
+        toast.success(data.message);
+      }
+      onDone();
+    } catch(err) { toast.error(err.response?.data?.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} width={520}
+      title={isDetain ? `Detain — ${student.name}` : `Lift Detention & Place — ${student.name}`}>
+      <div style={{display:'flex',flexDirection:'column',gap:14}}>
+
+        {isDetain ? (
+          <>
+            <div className="alert alert-red" style={{fontSize:12}}>
+              This locks assignments, slip tests and elective registration for this student.
+              They keep read-only access to marks. You can lift it any time.
+            </div>
+            <div className="form-group">
+              <label className="lbl">Reason</label>
+              <select className="input" value={reason} onChange={e=>setReason(e.target.value)}>
+                <option value="">— Select a reason —</option>
+                {REASONS.map(r=><option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            {reason === 'Other' && (
+              <div className="form-group">
+                <label className="lbl">Specify</label>
+                <input className="input" placeholder="Enter reason" onChange={e=>setReason(e.target.value)}/>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="alert alert-mint" style={{fontSize:12}}>
+              Choose exactly where this student re-joins. Their old marks stay untouched —
+              they are stored per academic year and are never deleted.
+            </div>
+            <div className="g2">
+              <div className="form-group">
+                <label className="lbl">Place in Semester *</label>
+                <select className="input" value={form.semester}
+                  onChange={e=>setForm(f=>({...f,semester:e.target.value}))}>
+                  {[1,2,3,4,5,6,7,8].map(n=><option key={n} value={n}>Semester {n}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="lbl">Section</label>
+                <input className="input" value={form.section}
+                  onChange={e=>setForm(f=>({...f,section:e.target.value}))} placeholder="1"/>
+              </div>
+            </div>
+            <div className="g2">
+              <div className="form-group">
+                <label className="lbl">Mentoring Batch</label>
+                <input className="input" value={form.mentoringBatch}
+                  onChange={e=>setForm(f=>({...f,mentoringBatch:e.target.value}))} placeholder="M1"/>
+              </div>
+              <div className="form-group">
+                <label className="lbl">Lab Batch</label>
+                <select className="input" value={form.labBatch}
+                  onChange={e=>setForm(f=>({...f,labBatch:e.target.value}))}>
+                  {['B1','B2','B3','NA'].map(b=><option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+            </div>
+            <p style={{fontSize:11.5,color:'var(--text3)'}}>
+              After saving, run <strong>Assign Mentors</strong> for the new Sem + Section + Batch so their mentor links correctly.
+            </p>
+          </>
+        )}
+
+        <div style={{display:'flex',gap:10}}>
+          <button className={`btn ${isDetain?'btn-white':'btn-mint'}`} onClick={submit}
+            disabled={saving || (isDetain && !reason)}>
+            {saving ? <Spinner/> : isDetain ? 'Detain Student' : 'Lift Detention & Place'}
+          </button>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

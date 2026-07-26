@@ -30,4 +30,20 @@ const teacherOnly = (req, res, next) =>
 const studentOnly = (req, res, next) =>
   req.role === 'student' ? next() : res.status(403).json({ message: 'Student only' });
 
-module.exports = { protect, adminOnly, teacherOnly, studentOnly };
+// activeStudentOnly: student must not be under detention/suspension.
+// Detained students keep READ access (marks, mentor) but lose the right to
+// DO anything — submit assignments, attempt slip tests, register electives.
+// Rights are restored the moment admin lifts the detention (status → Active).
+const activeStudentOnly = (req, res, next) => {
+  if (req.role !== 'student') return res.status(403).json({ message: 'Student only' });
+  if (req.user?.status === 'Detained')
+    return res.status(403).json({
+      message: 'You are currently under detention. Assignments, slip tests and elective registration are locked until the department lifts it.',
+      detained: true
+    });
+  if (req.user?.status === 'Graduated')
+    return res.status(403).json({ message: 'Graduated students cannot perform this action.' });
+  return next();
+};
+
+module.exports = { protect, adminOnly, teacherOnly, studentOnly, activeStudentOnly };

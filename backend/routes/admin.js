@@ -453,16 +453,13 @@ router.get('/promotion/preview', auth, async (req, res) => {
     if (section) q.section = String(section);
     const students = await Student.find(q).select('-password').sort({ usn: 1 });
 
+    // Supply tracking is disabled for now — detention is the only hold reason.
     const plan = students.map(s => {
-      const pending = (s.supplies||[]).some(x => !x.cleared);
-      if (s.status === 'Detained')      return { student: s, action: 'held',     reason: 'Detained — repeats semester' };
-      if (s.status === 'Graduated')     return { student: s, action: 'none',     reason: 'Already graduated' };
-      if (Number(semester) >= finalSem) {
-        return pending
-          ? { student: s, action: 'pending', reason: 'Final semester but has pending supplies' }
-          : { student: s, action: 'graduate',reason: 'Completes final semester' };
-      }
-      return { student: s, action: 'promote', reason: pending ? 'Promoted (carries supplies)' : 'Promoted' };
+      if (s.status === 'Detained')  return { student: s, action: 'held',     reason: s.detentionReason ? `Detained — ${s.detentionReason}` : 'Detained — repeats semester' };
+      if (s.status === 'Graduated') return { student: s, action: 'none',     reason: 'Already graduated' };
+      if (Number(semester) >= finalSem)
+                                    return { student: s, action: 'graduate', reason: 'Completes final semester' };
+      return { student: s, action: 'promote', reason: 'Promoted' };
     });
     res.json({ finalSem, plan });
   } catch(e) { res.status(500).json({ message: e.message }); }
@@ -470,43 +467,87 @@ router.get('/promotion/preview', auth, async (req, res) => {
 
 // ── PROMOTION: execute ──────────────────────────────────────────────────────
 
-// ── DETAINED STUDENT: REASSIGN TO ANOTHER BATCH ───────────────────────────
-// A detained student repeats the semester with the junior batch. Admin moves
-// them: new section + mentoring batch, reactivates them so they can register
-// electives / take tests with the new batch. Old marks stay untouched
-// (year-scoped, never deleted).
+// ── DETENTION CONTROL ─────────────────────────────────────────────────────
+// Admin decides detention (e.g. credit shortage, attendance shortage).
+// A detained student keeps read access to their marks but loses the right to
+// submit assignments, attempt slip tests, or register electives until lifted.
+router.post('/students/:id/detain', auth, async (req, res) => {
+  try {
+    const { department } = scopeOf(req);
+    const { reason = '' } = req.body;
+    const s = await Student.findById(req.params.id);
+    if (!s) return res.status(404).json({ message: 'Student not found' });
+    if (s.branch !== department) return res.status(403).json({ message: 'Not your department' });
+    if (s.status === 'Graduated') return res.status(400).json({ message: 'Cannot detain a graduated student' });
+
+    s.status = 'Detained';
+    s.detentionReason = reason;
+    s.detainedOn = new Date();
+    await s.save();
+    res.json({ message: `${s.name} detained${reason ? ' — ' + reason : ''}. Assignments, slip tests and elective registration are now locked for them.`, student: s });
+  } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ── LIFT DETENTION + PLACE STUDENT ────────────────────────────────────────
+// Admin decides exactly where the student re-joins: which SEMESTER (year),
+// section and mentoring batch. Lifting detention restores all their rights.
+// Marks are year-scoped and are never deleted by this operation.
 router.post('/students/:id/reassign', auth, async (req, res) => {
   try {
     const { department } = scopeOf(req);
-    const { section, mentoringBatch, reactivate = true } = req.body;
+    const { semester, section, mentoringBatch, labBatch, lift = true } = req.body;
     const s = await Student.findById(req.params.id);
     if (!s) return res.status(404).json({ message: 'Student not found' });
-    if (s.branch !== department && !req.user.isAdmin)
-      return res.status(403).json({ message: 'Not your department' });
+    if (s.branch !== department) return res.status(403).json({ message: 'Not your department' });
 
+    const { semestersFor } = require('../utils/programs');
+    const valid = semestersFor(s.program);
     const changes = [];
+
+    if (semester !== undefined && semester !== null && String(semester) !== '') {
+      const sem = Number(semester);
+      if (!valid.includes(sem))
+        return res.status(400).json({ message: `Semester must be one of ${valid.join(', ')} for ${s.program}` });
+      if (sem !== s.semester) {
+        changes.push(`semester ${s.semester} → ${sem}`);
+        // Move mentoring record to the new semester so the mentor lookup finds them
+        await MentoringRecord.updateMany(
+          { student: s._id, semester: s.semester },
+          { semester: sem, academicYear: getConfig().academicYear || '2026-27' }
+        );
+        s.semester = sem;
+      }
+    }
     if (section && String(section) !== s.section) {
       changes.push(`section ${s.section} → ${section}`);
       s.section = String(section);
     }
-    if (mentoringBatch && mentoringBatch !== s.mentoringBatch) {
-      changes.push(`batch ${s.mentoringBatch || '—'} → ${mentoringBatch}`);
+    if (labBatch && labBatch !== s.labBatch) {
+      changes.push(`lab batch ${s.labBatch} → ${labBatch}`);
+      s.labBatch = labBatch;
+    }
+    if (mentoringBatch !== undefined && mentoringBatch !== s.mentoringBatch) {
+      changes.push(`mentor batch ${s.mentoringBatch || '—'} → ${mentoringBatch || '—'}`);
       s.mentoringBatch = mentoringBatch;
-      // Detach old mentor for the CURRENT semester so the junior batch's
-      // mentor assignment (Sem+Section+Batch) picks this student up cleanly
+      // Detach old mentor so the new batch's Assign Mentors run picks them up
       await MentoringRecord.updateMany(
         { student: s._id, semester: s.semester },
         { $unset: { mentor: 1 } }
       );
     }
-    if (reactivate && s.status === 'Detained') {
-      changes.push('status Detained → Active');
+    if (lift && s.status === 'Detained') {
+      changes.push('detention lifted — full access restored');
       s.status = 'Active';
+      s.detentionReason = '';
+      s.detainedOn = null;
     }
     await s.save();
-    res.json({ message: changes.length
-      ? `Reassigned: ${changes.join(', ')}. Re-run Assign Mentors for the new batch to link their mentor.`
-      : 'No changes made', student: s });
+    res.json({
+      message: changes.length
+        ? `${s.name}: ${changes.join(', ')}. Run Assign Mentors for the new batch to link their mentor.`
+        : 'No changes made',
+      student: s
+    });
   } catch(e) { res.status(500).json({ message: e.message }); }
 });
 
@@ -529,8 +570,7 @@ router.post('/promotion/execute', auth, async (req, res) => {
       if (s.status === 'Graduated') continue;
 
       if (Number(semester) >= finalSem) {
-        if (s.hasPendingSupplies()) { s.status = 'PendingClearance'; pending++; }
-        else { s.status = 'Graduated'; graduated++; }
+        s.status = 'Graduated'; graduated++;
       } else {
         s.semester = Number(semester) + 1;
         promoted++;

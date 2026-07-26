@@ -9,7 +9,7 @@ const getAcademicYear = () => {
 };
 
 const multer     = require('multer');
-const { protect, teacherOnly, studentOnly } = require('../middleware/auth');
+const { protect, teacherOnly, studentOnly, activeStudentOnly } = require('../middleware/auth');
 const Assignment = require('../models/Assignment');
 const Submission = require('../models/Submission');
 const Subject    = require('../models/Subject');
@@ -205,7 +205,7 @@ router.get('/student/assignments', protect, studentOnly, async (req, res) => {
 });
 
 // ── STUDENT: submit a file online ─────────────────────────────────────────────
-router.post('/student/assignments/:id/submit', protect, studentOnly, upload.single('file'), async (req, res) => {
+router.post('/student/assignments/:id/submit', protect, activeStudentOnly, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
     if (!isConfigured()) return res.status(503).json({ message: 'File uploads not configured yet. Submit physically to your teacher.' });
@@ -259,7 +259,7 @@ router.post('/student/assignments/:id/submit', protect, studentOnly, upload.sing
 });
 
 // ── STUDENT: retract online submission (before deadline) ──────────────────────
-router.delete('/student/assignments/:id/submission', protect, studentOnly, async (req, res) => {
+router.delete('/student/assignments/:id/submission', protect, activeStudentOnly, async (req, res) => {
   try {
     const assignment = await Assignment.findById(req.params.id);
     if (assignment?.dueDate && new Date() > assignment.dueDate)

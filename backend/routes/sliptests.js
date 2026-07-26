@@ -1,5 +1,5 @@
 const router      = require('express').Router();
-const { protect, teacherOnly, studentOnly } = require('../middleware/auth');
+const { protect, teacherOnly, studentOnly, activeStudentOnly } = require('../middleware/auth');
 const SlipTest    = require('../models/SlipTest');
 const SlipTestAttempt = require('../models/SlipTestAttempt');
 const Student     = require('../models/Student');
@@ -7,7 +7,8 @@ const Subject     = require('../models/Subject');
 const TheoryMarks = require('../models/TheoryMarks');
 
 const teacherAuth = [protect, teacherOnly];
-const studentAuth = [protect, studentOnly];
+const studentAuth  = [protect, studentOnly];        // read-only (view list/result)
+const studentAction = [protect, activeStudentOnly];  // must be Active to attempt
 
 const getAcademicYear = () => {
   try {
@@ -432,7 +433,7 @@ router.post('/:id/push-to-cie', teacherAuth, async (req, res) => {
 
 
 // ── STUDENT: SAVE ANSWER (auto-save as student types) ────────────────────
-router.post('/attempt/:attemptId/save-answer', studentAuth, async (req, res) => {
+router.post('/attempt/:attemptId/save-answer', studentAction, async (req, res) => {
   try {
     const { qNo, selectedOption, textAnswer } = req.body;
     const attempt = await SlipTestAttempt.findById(req.params.attemptId);
@@ -451,7 +452,7 @@ router.post('/attempt/:attemptId/save-answer', studentAuth, async (req, res) => 
 });
 
 // ── STUDENT: LOG VIOLATION ─────────────────────────────────────────────────
-router.post('/attempt/:attemptId/violation', studentAuth, async (req, res) => {
+router.post('/attempt/:attemptId/violation', studentAction, async (req, res) => {
   try {
     const { type, detail } = req.body;
     const attempt = await SlipTestAttempt.findById(req.params.attemptId);
@@ -481,7 +482,7 @@ router.post('/attempt/:attemptId/violation', studentAuth, async (req, res) => {
 });
 
 // ── STUDENT: SUBMIT TEST ──────────────────────────────────────────────────
-router.post('/attempt/:attemptId/submit', studentAuth, async (req, res) => {
+router.post('/attempt/:attemptId/submit', studentAction, async (req, res) => {
   try {
     const { answers, autoSubmit, reason } = req.body;
     const attempt = await SlipTestAttempt.findById(req.params.attemptId);
@@ -558,7 +559,7 @@ router.get('/attempt/:attemptId/result', studentAuth, async (req, res) => {
 });
 
 // ── STUDENT: START TEST ───────────────────────────────────────────────────
-router.post('/:id/start', studentAuth, async (req, res) => {
+router.post('/:id/start', studentAction, async (req, res) => {
   try {
     const test = await SlipTest.findById(req.params.id);
     if (!test) return res.status(404).json({ message: 'Test not found' });

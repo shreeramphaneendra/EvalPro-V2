@@ -32,14 +32,14 @@ export default function StudentDashboard() {
   return (
     <Layout nav={NAV} title="Student Portal" subtitle="CIE Evaluation System">
       <Routes>
-        <Route path="/"            element={<StudentOverview/>}/>
-        <Route path="/marks"       element={<MarksPage/>}/>
+        <Route path="/"            element={<><DetentionBanner/><StudentOverview/></>}/>
+        <Route path="/marks"       element={<><DetentionBanner/><MarksPage/></>}/>
         <Route path="/teachers"    element={<TeachersPage/>}/>
         <Route path="/mentor"      element={<MentorPage/>}/>
-        <Route path="/assignments" element={<StudentAssignmentsPage/>}/>
-        <Route path="/sliptests"   element={<StudentSlipTests/>}/>
-        <Route path="/activity"    element={<ActivityPointsPage/>}/>
-        <Route path="/electives"   element={<StudentElectives/>}/>
+        <Route path="/assignments" element={<><DetentionBanner/><StudentAssignmentsPage/></>}/>
+        <Route path="/sliptests"   element={<><DetentionBanner/><StudentSlipTests/></>}/>
+        <Route path="/activity"    element={<><DetentionBanner/><ActivityPointsPage/></>}/>
+        <Route path="/electives"   element={<><DetentionBanner/><StudentElectives/></>}/>
         <Route path="/settings"    element={<StudentSettings/>}/>
       </Routes>
     </Layout>
@@ -327,6 +327,36 @@ function StudentOverview() {
 
 
 
+
+/* ── DETENTION BANNER ────────────────────────────────────────────────── */
+function DetentionBanner() {
+  const { user } = useAuth();
+  if (user?.status !== 'Detained') return null;
+  return (
+    <div style={{
+      margin:'0 0 16px', padding:'14px 18px',
+      background:'linear-gradient(135deg,#FEF2F2,#FEE2E2)',
+      border:'1px solid #FCA5A5', borderLeft:'4px solid #DC2626',
+      borderRadius:'var(--r3)'
+    }}>
+      <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+        <span style={{fontSize:18,lineHeight:1}}>⚠️</span>
+        <div>
+          <div style={{fontWeight:700,fontSize:14,color:'#991B1B',marginBottom:3}}>
+            Your account is currently under detention
+          </div>
+          <div style={{fontSize:12.5,color:'#7F1D1D',lineHeight:1.6}}>
+            {user?.detentionReason ? <>Reason: <strong>{user.detentionReason}</strong>. </> : null}
+            You can still view your marks and mentor details, but submitting assignments,
+            attempting slip tests, and elective registration are locked until the department lifts it.
+            Please contact your mentor or the HOD.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── ACTIVITY POINTS PAGE ───────────────────────────────────────────── */
 function ActivityPointsPage() {
   const { user } = useAuth();
@@ -418,6 +448,7 @@ function ActivityPointsPage() {
 
 /* ── STUDENT SLIP TESTS ──────────────────────────────────────────────── */
 function StudentSlipTests() {
+  const { user } = useAuth();
   const [tests,     setTests]     = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [activeTest, setActiveTest] = useState(null);
@@ -501,7 +532,11 @@ function StudentSlipTests() {
                           </p>
                         )}
                       </div>
-                      {status !== 'submitted' && (
+                      {status !== 'submitted' && user?.status === 'Detained' && (
+                        <span style={{padding:'8px 16px',background:'var(--red-l)',color:'var(--red-d)',
+                          borderRadius:'var(--r2)',fontSize:12,fontWeight:600,flexShrink:0}}>🔒 Locked</span>
+                      )}
+                      {status !== 'submitted' && user?.status !== 'Detained' && (
                         <button
                           style={{
                             padding:'10px 22px',background:'linear-gradient(135deg,var(--brand),var(--brand-d))',

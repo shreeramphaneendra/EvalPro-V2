@@ -26,6 +26,10 @@ const studentSchema = new mongoose.Schema({
   electives:      [{ type: mongoose.Schema.Types.ObjectId, ref: 'Subject' }],
 
   status:   { type: String, enum: ['Active','Detained','Graduated','PendingClearance'], default: 'Active' },
+  detentionReason: { type: String, default: '' },
+  detainedOn:      { type: Date,   default: null },
+  // supplies kept in schema so historical data is never lost, but the supply
+  // workflow is disabled in the UI and ignored by promotion for now.
   supplies: { type: [supplySchema], default: [] },
 
   isFirstLogin: { type: Boolean, default: true },
