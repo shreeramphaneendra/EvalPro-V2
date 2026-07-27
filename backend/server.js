@@ -7,6 +7,15 @@ const fs       = require('fs');
 
 const app = express();
 app.use(cors());
+
+// Hard timeout on every request — if anything hangs (slow Cloudinary call,
+// a runaway query), the client gets a clear 503 instead of spinning forever.
+app.use((req, res, next) => {
+  res.setTimeout(30000, () => {
+    if (!res.headersSent) res.status(503).json({ message: 'Request timed out — please try again' });
+  });
+  next();
+});
 app.use(express.json({ limit: '10mb' }));
 
 // Ensure uploads folder exists
@@ -26,7 +35,12 @@ app.use('/api',             require('./routes/assignments'));
 
 app.get('/', (req, res) => res.json({ message: 'EvalPro v2 API ✓' }));
 
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGO_URI, {
+  maxPoolSize: 50,              // enough concurrent DB ops for 800-1000 users' typical usage
+  minPoolSize: 5,
+  serverSelectionTimeoutMS: 8000, // fail fast instead of hanging if Mongo is unreachable
+  socketTimeoutMS: 30000,         // kill a stuck query instead of hanging forever
+})
   .then(async () => {
     console.log('✓ MongoDB connected');
 
@@ -45,3 +59,11 @@ mongoose.connect(process.env.MONGO_URI)
     console.error('✗ MongoDB error:', err.message);
     console.error('→ Run: brew services start mongodb-community');
   });
+
+// Never let one unhandled async error take down the process for all 800+ users
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});

@@ -27,6 +27,17 @@ async function autoCloseIfEnded(test) {
     if (!test || test.status !== 'active') return test;
     if (new Date() < new Date(test.windowEnd)) return test;
 
+    // ATOMIC CLAIM: if 50 students hit this at the same instant the window
+    // ends, only ONE request may win this update. Everyone else sees
+    // matchedCount 0 and simply returns the already-closing test — this
+    // prevents duplicate notifications, duplicate audit entries, and
+    // duplicate CIE pushes from concurrent close attempts.
+    const claim = await SlipTest.updateOne(
+      { _id: test._id, status: 'active' },
+      { $set: { status: 'closed' } }
+    );
+    if (claim.matchedCount === 0) return test; // someone else is already closing it
+
     const inProgress = await SlipTestAttempt.find({ slipTest: test._id, status: 'in_progress' });
     for (const attempt of inProgress) {
       attempt.status = 'submitted';
@@ -58,9 +69,7 @@ async function autoCloseIfEnded(test) {
       }
     }
 
-    test.status = 'closed';
-    await test.save();
-
+    // status already set to 'closed' atomically above
     // Results are now unlocked — tell everyone who attempted
     try {
       const attempted = await SlipTestAttempt.find({ slipTest: test._id, status: 'submitted' }).select('student').lean();
@@ -292,8 +301,15 @@ router.post('/:id/close', teacherAuth, async (req, res) => {
   try {
     const test = await SlipTest.findById(req.params.id);
     if (!test) return res.status(404).json({ message: 'Not found' });
-    test.status = 'closed';
-    await test.save();
+
+    // Atomic claim — a double-click or a slow network retry must not
+    // re-run the close/grade/notify pipeline twice.
+    const claim = await SlipTest.updateOne(
+      { _id: test._id, status: { $ne: 'closed' } },
+      { $set: { status: 'closed' } }
+    );
+    if (claim.matchedCount === 0)
+      return res.json({ message: 'Test already closed' });
 
     // Auto-submit any in-progress attempts
     const inProgress = await SlipTestAttempt.find({ slipTest: req.params.id, status: 'in_progress' });
@@ -533,6 +549,18 @@ router.post('/attempt/:attemptId/submit', studentAction, async (req, res) => {
       return res.status(403).json({ message: 'Not your attempt' });
     if (attempt.status === 'submitted') return res.json({ message: 'Already submitted' });
 
+    // Atomic claim — the exam timer's auto-submit and a manual click on
+    // Submit can fire within the same tick. Only one wins; the loser sees
+    // matchedCount 0 and returns immediately instead of re-grading and
+    // re-notifying the same attempt.
+    const claim = await SlipTestAttempt.updateOne(
+      { _id: attempt._id, status: { $ne: 'submitted' } },
+      { $set: { status: 'submitted' } }
+    );
+    if (claim.matchedCount === 0) {
+      return res.json({ message: 'Already submitted' });
+    }
+
     // Merge final answers
     if (answers) {
       for (const a of answers) {
@@ -544,7 +572,6 @@ router.post('/attempt/:attemptId/submit', studentAction, async (req, res) => {
       }
     }
 
-    attempt.status        = 'submitted';
     attempt.submitTime    = new Date();
     attempt.timeSpent     = Math.floor((new Date() - new Date(attempt.startTime)) / 1000);
     attempt.autoSubmitted = autoSubmit || false;
