@@ -51,6 +51,10 @@ mongoose.connect(process.env.MONGO_URI, {
     try { await mongoose.connection.collection('theorymarks').dropIndex('student_1_subject_1'); } catch(e) {}
     try { await mongoose.connection.collection('labmarks').dropIndex('student_1_subject_1'); } catch(e) {}
 
+    // Automatically close slip tests whose window has ended — grades MCQs and
+    // pushes scores to CIE without needing anyone to open the app.
+    require('./utils/slipTestScheduler').startSlipTestScheduler();
+
     app.listen(process.env.PORT || 5000, () =>
       console.log(`✓ Server running on http://localhost:${process.env.PORT || 5000}`)
     );

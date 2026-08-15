@@ -453,14 +453,24 @@ function StudentSlipTests() {
   const [loading,   setLoading]   = useState(true);
   const [activeTest, setActiveTest] = useState(null);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     try { const { data } = await api.get('/api/sliptests/student/available'); setTests(data); }
     catch { /* No tests available */ }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
+
+  // If any test is still waiting on its window to close, quietly re-check so the
+  // score appears on its own the moment results unlock — no manual refresh.
+  useEffect(() => {
+    if (activeTest) return;                       // don't poll while writing an exam
+    const pending = tests.some(t => t.resultsAt); // resultsAt set = still locked
+    if (!pending) return;
+    const id = setInterval(() => load(true), 20000);
+    return () => clearInterval(id);
+  }, [tests, activeTest]);
 
   if (activeTest) return (
     <SlipTestExam testId={activeTest} onFinish={() => { setActiveTest(null); load(); }}/>

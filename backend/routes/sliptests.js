@@ -757,4 +757,7 @@ async function autoGradeMCQ(attempt) {
   }
 }
 
+// Exported so the background scheduler can reuse this exact logic — including
+// its atomic claim — instead of duplicating the close/grade/push pipeline.
 module.exports = router;
+module.exports.autoCloseIfEnded = autoCloseIfEnded;
