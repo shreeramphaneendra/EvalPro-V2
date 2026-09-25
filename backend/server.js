@@ -6,7 +6,9 @@ const path     = require('path');
 const fs       = require('fs');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "https://eval-pro-v2-g94f.vercel.app"
+}));
 
 // Hard timeout on every request — if anything hangs (slow Cloudinary call,
 // a runaway query), the client gets a clear 503 instead of spinning forever.
