@@ -449,7 +449,10 @@ router.post('/:id/grade', teacherAuth, async (req, res) => {
         if (!tm) tm = new TheoryMarks({ student: attempt.student, subject: test.subject, teacher: req.user._id, academicYear: year });
         if (tm.status === 'approved') tm.status = 'submitted';
         const field = test.slot.toLowerCase(); // 'st1', 'st2', 'st3'
-        tm[field] = { questions: [], total: attempt.scaledScore, isAbsent: false };
+        if (!tm[field]) tm[field] = {};
+        tm[field].total     = attempt.scaledScore;
+        tm[field].isAbsent  = false;
+        tm[field].questions = [];
         tm.compute();
         await tm.save();
         attempt.pushedToCIE = true;

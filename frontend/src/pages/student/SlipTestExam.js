@@ -3,6 +3,11 @@ import api from '../../api';
 import toast from 'react-hot-toast';
 import { CheckCircle, AlertTriangle, Clock, Shield } from 'lucide-react';
 
+const OVERLAY = {
+  position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+  zIndex: 9999, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+};
+
 export default function SlipTestExam({ testId, onFinish }) {
   // ── State ─────────────────────────────────────────────────────────────
   const [phase,      setPhase]    = useState('loading');
@@ -12,6 +17,7 @@ export default function SlipTestExam({ testId, onFinish }) {
   const [timeLeft,   setTimeLeft] = useState(0);
   const [violations, setViolations]= useState(0);
   const [warning,    setWarning]  = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);  // in-app submit confirm
   const [result,     setResult]   = useState(null);
 
   // ── Refs — avoid stale closures completely ────────────────────────────
@@ -24,7 +30,22 @@ export default function SlipTestExam({ testId, onFinish }) {
   const dialogRef    = useRef(false);  // true while a confirm dialog is open — blur must be ignored
   const examStartRef = useRef(0);      // grace period: ignore blur/fullscreen violations for first 3s
 
-  const setPhaseSync = (p) => { phaseRef.current = p; setPhase(p); };
+  // While the in-app confirm is open, suppress proctor violations — the
+  // student is interacting with our own dialog, not leaving the exam.
+  useEffect(() => { dialogRef.current = confirmOpen; }, [confirmOpen]);
+
+  const setPhaseSync = (p) => {
+    phaseRef.current = p;
+    setPhase(p);
+    // Jump back to the top — otherwise the short result card renders above
+    // the fold while the browser is still scrolled to the old submit button.
+    requestAnimationFrame(() => {
+      try {
+        window.scrollTo(0, 0);
+        document.querySelector('[data-exam-root]')?.scrollTo(0, 0);
+      } catch {}
+    });
+  };
 
   // ── Step 1: Load briefing data ────────────────────────────────────────
   useEffect(() => {
@@ -105,12 +126,20 @@ export default function SlipTestExam({ testId, onFinish }) {
         autoSubmit: !!reason,
         reason
       });
-      setPhaseSync('submitted');
-      // Fetch result
-      try {
-        const { data } = await api.get(`/api/sliptests/attempt/${attemptId.current}/result`);
-        setResult(data);
-      } catch {}
+      // Go straight back to the Slip Tests list and confirm with a toast.
+      // Scores are hidden until the window closes anyway, so a dedicated
+      // result screen mostly showed "results at 12:00" — and gave the student
+      // somewhere to get stranded. The list page shows the score when it unlocks.
+      try { if (document.fullscreenElement) await document.exitFullscreen(); } catch {}
+
+      const why = reason === 'tab_switch'  ? 'Auto-submitted — you switched tabs'
+                : reason === 'time_up'     ? 'Time is up — your test was submitted'
+                : reason === 'violations'  ? 'Auto-submitted — too many violations'
+                : 'Slip test submitted';
+      toast.success(why, { duration: 5000 });
+
+      try { window.scrollTo(0, 0); } catch {}
+      onFinish?.();
     } catch(err) {
       toast.error('Submission failed — ' + (err.response?.data?.message || 'check connection'));
       submitting.current = false;
@@ -262,7 +291,7 @@ export default function SlipTestExam({ testId, onFinish }) {
   // PHASE: LOADING
   // ══════════════════════════════════════════════════════════════════════
   if (phase === 'loading') return (
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#0F172A'}}>
+    <div data-exam-root style={{...OVERLAY,display:'flex',alignItems:'center',justifyContent:'center',background:'#0F172A',padding:20}}>
       <div style={{textAlign:'center'}}>
         <div style={{
           width:48,height:48,border:'4px solid rgba(255,107,53,.2)',
@@ -278,7 +307,7 @@ export default function SlipTestExam({ testId, onFinish }) {
   // PHASE: ERROR
   // ══════════════════════════════════════════════════════════════════════
   if (phase === 'error') return (
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#0F172A'}}>
+    <div data-exam-root style={{...OVERLAY,display:'flex',alignItems:'center',justifyContent:'center',background:'#0F172A',padding:20}}>
       <div style={{textAlign:'center',color:'#fff'}}>
         <AlertTriangle size={48} color="#EF4444" style={{margin:'0 auto 16px'}}/>
         <h2 style={{fontFamily:"'Outfit',sans-serif",fontWeight:700,marginBottom:8}}>Test Unavailable</h2>
@@ -295,9 +324,9 @@ export default function SlipTestExam({ testId, onFinish }) {
   if (phase === 'briefing') {
     const d = briefData;
     return (
-      <div style={{
-        minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
-        background:'linear-gradient(135deg,#0F172A 0%,#1E293B 100%)',padding:24
+      <div data-exam-root style={{
+        ...OVERLAY,display:'flex',alignItems:'center',justifyContent:'center',
+        background:'linear-gradient(135deg,#0F172A 0%,#1E293B 100%)',padding:20
       }}>
         <div style={{
           maxWidth:540,width:'100%',
@@ -403,7 +432,63 @@ export default function SlipTestExam({ testId, onFinish }) {
   // PHASE: EXAM
   // ══════════════════════════════════════════════════════════════════════
   if (phase === 'exam') return (
-    <div style={{minHeight:'100vh',background:'#F8FAFC',display:'flex',flexDirection:'column',userSelect:'none'}}>
+    <div data-exam-root style={{...OVERLAY,background:'#F8FAFC',display:'flex',flexDirection:'column',userSelect:'none'}}>
+
+      {/* Submit confirmation — rendered in-page because Safari suppresses
+          native confirm() dialogs while the document is in fullscreen. */}
+      {confirmOpen && (
+        <div style={{
+          position:'fixed', top:0, left:0, right:0, bottom:0, zIndex:100000,
+          background:'rgba(15,23,42,.72)',
+          display:'flex', alignItems:'center', justifyContent:'center', padding:20,
+        }}>
+          <div style={{
+            background:'#fff', borderRadius:16, padding:'26px 24px',
+            maxWidth:420, width:'100%', textAlign:'center',
+            boxShadow:'0 20px 60px rgba(0,0,0,.4)',
+          }}>
+            <div style={{fontSize:34, marginBottom:10}}>📤</div>
+            <h2 style={{
+              fontFamily:"'Outfit',sans-serif", fontWeight:800, fontSize:20,
+              color:'#1E293B', marginBottom:8,
+            }}>
+              Submit your test?
+            </h2>
+            <p style={{fontSize:14, color:'#64748B', lineHeight:1.6, marginBottom:6}}>
+              You have answered <strong style={{color:'#1E293B'}}>{answered}</strong> of{' '}
+              <strong style={{color:'#1E293B'}}>{questions.length}</strong> questions.
+            </p>
+            {answered < questions.length && (
+              <p style={{fontSize:13, color:'#D97706', fontWeight:600, marginBottom:6}}>
+                {questions.length - answered} question{questions.length-answered!==1?'s':''} still unanswered
+              </p>
+            )}
+            <p style={{fontSize:12.5, color:'#94A3B8', marginBottom:20}}>
+              You cannot return to the test after submitting.
+            </p>
+            <div style={{display:'flex', gap:10}}>
+              <button
+                onClick={() => setConfirmOpen(false)}
+                style={{
+                  flex:1, padding:'12px', background:'#fff', border:'1px solid #CBD5E1',
+                  borderRadius:10, color:'#334155', fontWeight:600, fontSize:14, cursor:'pointer',
+                }}>
+                Keep writing
+              </button>
+              <button
+                onClick={() => { setConfirmOpen(false); doSubmit(); }}
+                style={{
+                  flex:1, padding:'12px',
+                  background:'linear-gradient(135deg,#FF6B35,#E55A2B)',
+                  border:'none', borderRadius:10, color:'#fff',
+                  fontWeight:700, fontSize:14, cursor:'pointer',
+                }}>
+                Submit now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Violation warning banner */}
       {warning && (
@@ -422,7 +507,7 @@ export default function SlipTestExam({ testId, onFinish }) {
       )}
 
       {/* TOP BAR */}
-      <div style={{
+      <div className="exam-topbar" style={{
         position:'sticky',top:0,zIndex:1000,
         background:'#0F172A',
         padding:'12px 20px',
@@ -430,7 +515,7 @@ export default function SlipTestExam({ testId, onFinish }) {
         boxShadow:'0 2px 20px rgba(0,0,0,.3)'
       }}>
         {/* Title */}
-        <div style={{flex:1,minWidth:0}}>
+        <div className="exam-title-wrap" style={{flex:1,minWidth:0}}>
           <div style={{
             fontFamily:"'Outfit',sans-serif",fontWeight:700,
             fontSize:15,color:'#fff',
@@ -451,7 +536,7 @@ export default function SlipTestExam({ testId, onFinish }) {
         </div>
 
         {/* Timer */}
-        <div style={{
+        <div className="exam-timer" style={{
           display:'flex',flexDirection:'column',alignItems:'center',
           padding:'8px 16px',
           background:timeLeft<60?'rgba(239,68,68,.2)':timeLeft<300?'rgba(245,158,11,.15)':'rgba(255,255,255,.05)',
@@ -481,12 +566,8 @@ export default function SlipTestExam({ testId, onFinish }) {
 
         {/* Submit button */}
         <button
-          onClick={() => {
-            dialogRef.current = true;
-            const ok = window.confirm(`Submit test now? You have answered ${answered}/${questions.length} questions.`);
-            setTimeout(() => { dialogRef.current = false; }, 800);
-            if (ok) doSubmit();
-          }}
+          className="exam-submit"
+          onClick={() => setConfirmOpen(true)}
           style={{
             padding:'10px 20px',
             background:'linear-gradient(135deg,#FF6B35,#E55A2B)',
@@ -501,10 +582,10 @@ export default function SlipTestExam({ testId, onFinish }) {
       </div>
 
       {/* QUESTIONS */}
-      <div style={{flex:1,maxWidth:820,width:'100%',margin:'0 auto',padding:'24px 16px 40px',display:'flex',flexDirection:'column',gap:18}}>
+      <div className="exam-body" style={{flex:1,maxWidth:820,width:'100%',margin:'0 auto',padding:'24px 16px 40px',display:'flex',flexDirection:'column',gap:18}}>
 
         {/* Question navigator dots */}
-        <div style={{display:'flex',gap:6,flexWrap:'wrap',padding:'12px 16px',
+        <div className="exam-qnav" style={{display:'flex',gap:6,flexWrap:'wrap',padding:'12px 16px',
           background:'#fff',borderRadius:12,border:'1px solid #E2E8F0',
           boxShadow:'0 1px 4px rgba(0,0,0,.06)'}}>
           <span style={{fontSize:11,color:'#94A3B8',fontWeight:600,marginRight:4,alignSelf:'center'}}>Questions:</span>
@@ -541,7 +622,7 @@ export default function SlipTestExam({ testId, onFinish }) {
             : ans.textAnswer?.trim();
 
           return (
-            <div id={`q-${q.qNo}`} key={q.qNo} style={{
+            <div id={`q-${q.qNo}`} key={q.qNo} className="exam-question" style={{
               background:'#fff',
               border:`1px solid ${done?'#10B981':'#E2E8F0'}`,
               borderRadius:16,overflow:'hidden',
@@ -549,7 +630,7 @@ export default function SlipTestExam({ testId, onFinish }) {
               transition:'box-shadow .2s,border-color .2s'
             }}>
               {/* Question header */}
-              <div style={{
+              <div className="exam-question-head" style={{
                 padding:'14px 20px',
                 background:q.type==='mcq'?'#EFF6FF':'#F0FDF4',
                 borderBottom:'1px solid #E2E8F0',
@@ -575,7 +656,7 @@ export default function SlipTestExam({ testId, onFinish }) {
                 {done && <CheckCircle size={16} color="#10B981"/>}
               </div>
 
-              <div style={{padding:'20px'}}>
+              <div className="exam-question-body" style={{padding:'20px'}}>
                 {/* Question text */}
                 <p style={{
                   fontSize:15,color:'#1E293B',lineHeight:1.75,
@@ -593,6 +674,7 @@ export default function SlipTestExam({ testId, onFinish }) {
                         <div
                           key={oi}
                           onClick={() => setAnswer(q.qNo, 'selectedOption', oi)}
+                          className="exam-option"
                           style={{
                             display:'flex',alignItems:'center',gap:14,
                             padding:'13px 16px',borderRadius:12,cursor:'pointer',
@@ -654,12 +736,7 @@ export default function SlipTestExam({ testId, onFinish }) {
 
         {/* Bottom submit */}
         <button
-          onClick={() => {
-            dialogRef.current = true;
-            const ok = window.confirm(`Submit test now? ${answered}/${questions.length} questions answered.`);
-            setTimeout(() => { dialogRef.current = false; }, 800);
-            if (ok) doSubmit();
-          }}
+          onClick={() => setConfirmOpen(true)}
           style={{
             padding:'16px',marginTop:8,
             background:'linear-gradient(135deg,#FF6B35,#E55A2B)',
@@ -689,9 +766,9 @@ export default function SlipTestExam({ testId, onFinish }) {
   // PHASE: SUBMITTED
   // ══════════════════════════════════════════════════════════════════════
   if (phase === 'submitted') return (
-    <div style={{
-      minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
-      background:'#F8FAFC',padding:24
+    <div data-exam-root style={{
+      ...OVERLAY,display:'flex',alignItems:'center',justifyContent:'center',
+      background:'#F8FAFC',padding:20
     }}>
       <div style={{maxWidth:460,width:'100%',textAlign:'center'}}>
         {/* Icon */}

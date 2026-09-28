@@ -54,14 +54,14 @@ export default function Landing() {
   ];
 
   return (
-    <div style={{
+    <div className="landing-root" style={{
       minHeight: '100vh',
       display: 'flex',
       fontFamily: "'Inter', sans-serif",
       background: '#F4F6FB',
     }}>
       {/* Left panel — brand */}
-      <div style={{
+      <div className="landing-brand" style={{
         width: '42%',
         minHeight: '100vh',
         background: '#0A0E1A',
@@ -127,7 +127,7 @@ export default function Landing() {
           </p>
 
           {/* Features list */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="landing-features" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {features.slice(0,6).map(f => (
               <div key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13, color: 'rgba(255,255,255,.55)' }}>
                 <CheckCircle size={14} color="#FF6B35" style={{ flexShrink: 0, marginTop: 1 }}/>
@@ -163,7 +163,7 @@ export default function Landing() {
       </div>
 
       {/* Right panel — login */}
-      <div style={{
+      <div className="landing-login" style={{
         flex: 1,
         display: 'flex',
         alignItems: 'center',

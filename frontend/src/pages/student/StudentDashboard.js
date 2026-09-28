@@ -473,7 +473,17 @@ function StudentSlipTests() {
   }, [tests, activeTest]);
 
   if (activeTest) return (
-    <SlipTestExam testId={activeTest} onFinish={() => { setActiveTest(null); load(); }}/>
+    <SlipTestExam
+      testId={activeTest}
+      onFinish={() => {
+        setActiveTest(null);
+        // Leave fullscreen and return to the top of the list, otherwise the
+        // browser keeps the exam's old scroll position and the page looks blank.
+        try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
+        requestAnimationFrame(() => { try { window.scrollTo(0, 0); } catch {} });
+        load();
+      }}
+    />
   );
 
   return (
@@ -484,7 +494,7 @@ function StudentSlipTests() {
       </div>
 
       {loading ? <div style={{textAlign:'center',padding:48}}><Spinner size="lg"/></div>
-      : tests.length === 0
+      : tests.filter(t => t && t.test).length === 0
         ? (
           <div className="s-card s-card--empty">
             <div className="s-empty-icon">🛡</div>
@@ -494,9 +504,10 @@ function StudentSlipTests() {
         )
         : (
           <div style={{display:'flex',flexDirection:'column',gap:12}}>
-            {tests.map((t,i) => {
+            {tests.filter(t => t && t.test).map((t,i) => {
               const status = t.attemptStatus;
-              const timeLeft = Math.max(0, new Date(t.test.windowEnd) - new Date());
+              const endAt  = t.test.windowEnd ? new Date(t.test.windowEnd) : null;
+              const timeLeft = endAt && !isNaN(endAt) ? Math.max(0, endAt - new Date()) : 0;
               const minsLeft = Math.floor(timeLeft/60000);
               return (
                 <div key={i} style={{

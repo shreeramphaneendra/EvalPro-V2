@@ -4,6 +4,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { LogOut, BarChart2, Menu, X, Bell } from 'lucide-react';
 
+// Bump this whenever a fix ships, so it is obvious at a glance whether the
+// browser is running the new bundle or a cached/stale one.
+export const BUILD_TAG = 'v2.3-mobile';
+
 export function Layout({ nav, children, title, subtitle }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -68,6 +72,12 @@ export function Layout({ nav, children, title, subtitle }) {
             <LogOut size={14} style={{ opacity:.9 }}/>
             Sign out
           </button>
+          <div style={{
+            fontSize:10, color:'rgba(255,255,255,.25)',
+            textAlign:'center', paddingTop:6, letterSpacing:'.04em',
+          }}>
+            EvalPro {BUILD_TAG}
+          </div>
         </div>
       </aside>
 

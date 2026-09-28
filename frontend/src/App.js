@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import api from './api';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 import Landing          from './pages/auth/Landing';
@@ -69,6 +70,7 @@ function AppRoutes() {
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
         <Toaster
@@ -85,5 +87,6 @@ export default function App() {
         <AppRoutes/>
       </BrowserRouter>
     </AuthProvider>
+    </ErrorBoundary>
   );
 }

@@ -182,16 +182,13 @@ router.post('/theory-marks/bulk-save', auth, async (req, res) => {
     // Load ExamConfig ONCE before the loop (not per row — avoids N+1 queries)
     const examCfg = await ExamConfig.findOne({ subject: subjectId, examType });
     for (const row of rows) {
-      // Find existing doc — try current year first, then any year (handles migration from old year)
+      // Scoped strictly to the current academic year. A record from another year
+      // is that year's history and must never be relabelled — a detained or
+      // repeating student legitimately has one record PER year, and rewriting
+      // the year on an old record silently destroys their previous marks.
       let tm = await TheoryMarks.findOne({ student: row.studentId, subject: subjectId, academicYear });
       if (!tm) {
-        // Try to find with any academicYear (old doc exists from previous year label)
-        tm = await TheoryMarks.findOne({ student: row.studentId, subject: subjectId });
-        if (tm) {
-          tm.academicYear = academicYear; // migrate to current year
-        } else {
-          tm = new TheoryMarks({ student: row.studentId, subject: subjectId, teacher: req.user._id, academicYear });
-        }
+        tm = new TheoryMarks({ student: row.studentId, subject: subjectId, teacher: req.user._id, academicYear });
       }
       // Migrate legacy 'approved' status → 'submitted'
       if (tm.status === 'approved') tm.status = 'submitted';
@@ -899,9 +896,10 @@ router.post('/marks-upload', auth, require('multer')({ storage: require('multer'
         const student = await Student.findOne({ usn });
         if (!student) { errors.push(`USN ${usn}: not found`); continue; }
 
+        // Strictly year-scoped. A record from another year belongs to that year —
+        // relabelling it would erase a repeating/detained student's earlier marks.
         let tm = await TheoryMarks.findOne({ student: student._id, subject: subjectId, academicYear });
-        if (!tm) tm = await TheoryMarks.findOne({ student: student._id, subject: subjectId }) || new TheoryMarks({ student: student._id, subject: subjectId, teacher: req.user._id, academicYear });
-        if (tm.academicYear !== academicYear) tm.academicYear = academicYear;
+        if (!tm) tm = new TheoryMarks({ student: student._id, subject: subjectId, teacher: req.user._id, academicYear });
 
         const fieldMap = { CT1:'ct1', CT2:'ct2', ST1:'st1', ST2:'st2', ST3:'st3', ASGN1:'asgn1', ASGN2:'asgn2' };
         const key = fieldMap[examType];

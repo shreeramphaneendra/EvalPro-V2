@@ -880,6 +880,108 @@ textarea.input { resize: vertical; min-height: 80px; }
 
   /* Modals fit small screens */
   .modal { width:94vw !important; max-width:94vw !important; margin:0 3vw; }
+
+  /* Keep content clear of notches / home indicators */
+  .sidebar    { padding-top: env(safe-area-inset-top, 0px); }
+  .page-content { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+  .mobile-menu-btn { top: calc(12px + env(safe-area-inset-top, 0px)); }
+
+  /* Headings scale down so they stop wrapping into three lines */
+  .a-page-title, .t-page-title, .s-page-title { font-size:19px; line-height:1.25; }
+  .a-page-sub,   .t-page-sub,   .s-page-sub   { font-size:12px; }
+
+  /* Page headers stack instead of squeezing the action button off-screen */
+  .a-page-header, .t-page-header, .s-page-header {
+    flex-direction:column; align-items:stretch; gap:10px;
+  }
+  .a-page-header .btn, .t-page-header .btn { width:100%; justify-content:center; }
+
+  /* Cards get tighter padding so content isn't a narrow column */
+  .card, .a-card, .s-card { padding:14px !important; }
+
+  /* Tabs scroll horizontally rather than wrapping into a tall stack */
+  .tabs {
+    overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tab-btn { white-space:nowrap; flex-shrink:0; }
+
+  /* Subject pickers and chip rows scroll instead of stacking */
+  .t-subject-pills, .a-chip-row {
+    overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch;
+  }
+  .t-subject-pills > *, .a-chip-row > * { flex-shrink:0; }
+
+  /* Touch targets — 44px is the accessible minimum */
+  .btn        { min-height:44px; padding:10px 16px; }
+  .btn-sm     { min-height:38px; }
+  .btn-xs     { min-height:32px; }
+  .input, select.input, textarea.input {
+    min-height:44px;
+    font-size:16px;   /* < 16px makes iOS Safari zoom on focus */
+  }
+
+  /* Any 2-up inline grid collapses */
+  .g2, .g3, .g4 { grid-template-columns:1fr !important; }
+}
+
+/* ── LANDING PAGE — phone layout ────────────────────────────────────────
+   The 42% / 58% split is a desktop layout. On a phone it squeezed the brand
+   panel to a sliver and wrapped the institute name one word per line. */
+@media (max-width: 900px) {
+  .landing-root  { flex-direction: column; }
+  .landing-brand {
+    width: 100% !important;
+    min-height: auto !important;
+    position: static !important;
+    padding: 28px 22px !important;
+    padding-top: calc(28px + env(safe-area-inset-top, 0px)) !important;
+  }
+  .landing-login {
+    width: 100%;
+    padding: 28px 22px !important;
+    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  .landing-brand h1 { font-size: 34px !important; line-height: 1.1 !important; }
+}
+
+/* On a small phone keep the branding and the developer credit, but drop the
+   feature checklist — it is the bulk of the panel and pushes the sign-in
+   buttons far below the fold. */
+@media (max-width: 640px) {
+  .landing-brand h1 { font-size: 28px !important; }
+  .landing-features { display: none !important; }
+  .landing-login { align-items: flex-start !important; }
+}
+
+/* Small phones */
+@media (max-width: 420px) {
+  .page-content { padding:12px; padding-top:60px; }
+  .a-stats, .t-stats { grid-template-columns:1fr !important; }
+  .a-page-title, .t-page-title, .s-page-title { font-size:17px; }
+  .modal { width:97vw !important; max-width:97vw !important; margin:0 1.5vw; }
+  .tbl { min-width:560px; }
+}
+
+/* ── SLIP TEST EXAM — phone layout ──────────────────────────────────────
+   The exam renders as a fixed overlay, so it needs its own rules rather
+   than inheriting the dashboard's. */
+@media (max-width: 768px) {
+  .exam-topbar {
+    flex-wrap:wrap; gap:10px !important;
+    padding:10px 14px !important;
+    padding-top: calc(10px + env(safe-area-inset-top, 0px)) !important;
+  }
+  .exam-title-wrap { flex:1 1 100%; order:1; }
+  .exam-timer      { order:2; }
+  .exam-submit     { order:3; margin-left:auto; }
+  .exam-body       { padding:14px 12px 40px !important; }
+  .exam-qnav       { padding:10px 12px !important; }
+  .exam-question   { border-radius:12px !important; }
+  .exam-question-head { padding:10px 14px !important; flex-wrap:wrap; gap:6px; }
+  .exam-question-body { padding:14px !important; }
+  .exam-option     { padding:12px 13px !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

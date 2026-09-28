@@ -468,6 +468,7 @@ function ResultsModal({ testId, onClose }) {
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [grading, setGrading] = useState({});
+  const [reviewing, setReviewing] = useState(null);   // { row, test } being marked
   const [saving,  setSaving]  = useState(false);
 
   useEffect(() => {
@@ -584,13 +585,12 @@ function ResultsModal({ testId, onClose }) {
                     {hasShort && (
                       <td className="center">
                         {r.attempt?.status === 'submitted' ? (
-                          r.attempt.graded
-                            ? <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{r.attempt.shortScore}</span>
-                            : <input type="number" min={0} max={test?.totalMarks} step={0.5}
-                                style={{width:60,padding:'3px 6px',border:'1px solid var(--border)',borderRadius:'var(--r1)',fontSize:12,textAlign:'center'}}
-                                placeholder="—"
-                                value={grading[r.attempt._id] ?? ''}
-                                onChange={e=>setShortScore(r.attempt._id,e.target.value)}/>
+                          <button className="btn btn-white btn-xs"
+                            onClick={()=>setReviewing({ row:r, test })}>
+                            {r.attempt.graded
+                              ? <>✓ {r.attempt.shortScore} — Review</>
+                              : 'Read & Mark'}
+                          </button>
                         ) : '—'}
                       </td>
                     )}
@@ -637,13 +637,21 @@ function ResultsModal({ testId, onClose }) {
           </div>
         </div>
 
+        {reviewing && (
+          <AnswerReviewModal
+            row={reviewing.row}
+            test={reviewing.test}
+            onClose={()=>setReviewing(null)}
+            onSaved={async ()=>{
+              setReviewing(null);
+              const { data: refreshed } = await api.get(`/api/sliptests/${testId}/attempts`);
+              setData(refreshed);
+            }}
+          />
+        )}
+
         {/* Actions */}
-        <div style={{display:'flex',gap:10,alignItems:'center'}}>
-          {hasShort && Object.keys(grading).length > 0 && (
-            <button className="btn btn-brand btn-sm" onClick={saveGrades} disabled={saving}>
-              {saving ? <Spinner/> : 'Save Short Answer Grades'}
-            </button>
-          )}
+        <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
           {allGraded && (
             <button className="btn btn-mint" onClick={pushToCIE} disabled={saving}>
               {saving ? <Spinner/> : <><CheckCircle size={13}/> Push All to CIE {test?.slot}</>}
@@ -651,7 +659,8 @@ function ResultsModal({ testId, onClose }) {
           )}
           {!allGraded && hasShort && (
             <p style={{fontSize:12,color:'var(--text3)'}}>
-              Grade short answers above, then push to CIE
+              Use <strong>Read &amp; Mark</strong> on each student to read their written
+              answers and award marks. Once everyone is marked, push to CIE.
             </p>
           )}
           {!hasShort && (
@@ -659,6 +668,151 @@ function ResultsModal({ testId, onClose }) {
               {saving ? <Spinner/> : <><CheckCircle size={13}/> Push All to CIE {test?.slot}</>}
             </button>
           )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+
+/* ── READ & MARK — shows what the student actually wrote ────────────────
+   Previously the teacher had only a number box and no way to see the answer,
+   which made short-answer grading impossible. */
+function AnswerReviewModal({ row, test, onClose, onSaved }) {
+  const attempt = row.attempt;
+  const qById = {};
+  (test?.questions || []).forEach(q => { qById[q.qNo] = q; });
+
+  const shortAnswers = (attempt?.answers || []).filter(a => a.type === 'short');
+  const [marks, setMarks] = useState(() => {
+    const init = {};
+    shortAnswers.forEach(a => { init[a.qNo] = a.marksAwarded ?? ''; });
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const maxFor = (qNo) => qById[qNo]?.marks ?? 1;
+  const totalAwarded = shortAnswers.reduce((s,a) => s + (Number(marks[a.qNo]) || 0), 0);
+  const totalPossible = shortAnswers.reduce((s,a) => s + maxFor(a.qNo), 0);
+
+  const save = async () => {
+    // Every short answer must have a mark before this can be saved
+    const missing = shortAnswers.filter(a => marks[a.qNo] === '' || marks[a.qNo] == null);
+    if (missing.length) { toast.error(`Mark all ${shortAnswers.length} answers first`); return; }
+    const over = shortAnswers.find(a => Number(marks[a.qNo]) > maxFor(a.qNo));
+    if (over) { toast.error(`Q${over.qNo} cannot exceed ${maxFor(over.qNo)} marks`); return; }
+
+    setSaving(true);
+    try {
+      await api.post(`/api/sliptests/${test._id}/grade`, {
+        grades: [{
+          attemptId: attempt._id,
+          answers: shortAnswers.map(a => ({ qNo: a.qNo, marksAwarded: Number(marks[a.qNo]) })),
+        }],
+        pushToCIE: false,
+      });
+      toast.success(`Marked ${row.student.name} — ${totalAwarded}/${totalPossible}`);
+      onSaved();
+    } catch(e) { toast.error(e.response?.data?.message || 'Failed to save'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} width={760}
+      title={`Mark — ${row.student.name} (${row.student.usn})`}>
+      <div style={{display:'flex',flexDirection:'column',gap:14,maxHeight:'75vh',overflowY:'auto'}}>
+
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+          <span className="tag tag-blue" style={{fontSize:10}}>MCQ auto: {attempt.mcqScore ?? 0}</span>
+          <span className="tag tag-mint" style={{fontSize:10}}>
+            Short: {totalAwarded}/{totalPossible}
+          </span>
+          {attempt.autoSubmitted && (
+            <span className="tag tag-red" style={{fontSize:10}}>
+              Auto-submitted ({attempt.autoSubmitReason || 'violation'})
+            </span>
+          )}
+          {attempt.violationCount > 0 && (
+            <span className="tag tag-amber" style={{fontSize:10}}>
+              ⚠ {attempt.violationCount} violation{attempt.violationCount!==1?'s':''}
+            </span>
+          )}
+        </div>
+
+        {shortAnswers.length === 0 ? (
+          <div className="alert alert-blue" style={{fontSize:12.5}}>
+            This test has no written answers — the MCQ score is final.
+          </div>
+        ) : shortAnswers.map(a => {
+          const q = qById[a.qNo] || {};
+          const written = (a.textAnswer || '').trim();
+          return (
+            <div key={a.qNo} style={{
+              border:'1px solid var(--border)', borderRadius:'var(--r3)', overflow:'hidden',
+            }}>
+              <div style={{
+                padding:'10px 14px', background:'var(--surface2)',
+                borderBottom:'1px solid var(--border)',
+                display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
+              }}>
+                <span className="tag tag-mint" style={{fontSize:9}}>Q{a.qNo}</span>
+                <span style={{fontSize:13, fontWeight:600, color:'var(--text)', flex:1, minWidth:180}}>
+                  {q.text || '(question text unavailable)'}
+                </span>
+                <span style={{fontSize:11, color:'var(--text3)'}}>max {maxFor(a.qNo)}</span>
+              </div>
+
+              <div style={{padding:'12px 14px'}}>
+                <div style={{fontSize:10.5, fontWeight:700, color:'var(--text3)',
+                  letterSpacing:'.05em', marginBottom:5}}>STUDENT WROTE</div>
+                <div style={{
+                  padding:'11px 13px', borderRadius:'var(--r2)',
+                  background: written ? 'var(--surface2)' : 'var(--red-l)',
+                  border:`1px solid ${written ? 'var(--border)' : '#FCA5A5'}`,
+                  fontSize:13.5, lineHeight:1.65, color:'var(--text)',
+                  whiteSpace:'pre-wrap', wordBreak:'break-word',
+                }}>
+                  {written || 'Left blank'}
+                </div>
+
+                {q.hint && (
+                  <div style={{marginTop:8, fontSize:12, color:'var(--text2)'}}>
+                    <strong style={{color:'var(--mint-d)'}}>Expected:</strong> {q.hint}
+                  </div>
+                )}
+
+                <div style={{marginTop:11, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+                  <label style={{fontSize:12.5, fontWeight:600}}>Marks</label>
+                  <input type="number" min={0} max={maxFor(a.qNo)} step={0.5}
+                    style={{width:80, padding:'7px 10px', border:'1px solid var(--border)',
+                      borderRadius:'var(--r1)', fontSize:13, textAlign:'center'}}
+                    value={marks[a.qNo]}
+                    onChange={e=>setMarks(m=>({...m,[a.qNo]:e.target.value}))}/>
+                  <span style={{fontSize:12, color:'var(--text3)'}}>/ {maxFor(a.qNo)}</span>
+
+                  <div style={{display:'flex', gap:6, marginLeft:'auto'}}>
+                    <button className="btn btn-ghost btn-xs"
+                      onClick={()=>setMarks(m=>({...m,[a.qNo]:0}))}>0</button>
+                    <button className="btn btn-ghost btn-xs"
+                      onClick={()=>setMarks(m=>({...m,[a.qNo]:maxFor(a.qNo)/2}))}>Half</button>
+                    <button className="btn btn-ghost btn-xs"
+                      onClick={()=>setMarks(m=>({...m,[a.qNo]:maxFor(a.qNo)}))}>Full</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={{display:'flex', gap:10, alignItems:'center',
+          borderTop:'1px solid var(--border)', paddingTop:12}}>
+          <button className="btn btn-brand" onClick={save} disabled={saving || !shortAnswers.length}>
+            {saving ? <Spinner/> : 'Save Marks'}
+          </button>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <span style={{marginLeft:'auto', fontSize:12.5, color:'var(--text2)'}}>
+            Short total: <strong>{totalAwarded}/{totalPossible}</strong>
+          </span>
         </div>
       </div>
     </Modal>
